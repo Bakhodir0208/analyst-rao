@@ -89,7 +89,14 @@ function showScreen(id) {
 //  SETTINGS
 // ═══════════════════════════════════════════
 function loadSettings() {
-  state.scriptUrl    = localStorage.getItem('rao_script_url')      || DEFAULT_SCRIPT_URL;
+  const savedUrl = localStorage.getItem('rao_script_url');
+  if (DEFAULT_SCRIPT_URL) {
+    state.scriptUrl = DEFAULT_SCRIPT_URL;
+    localStorage.setItem('rao_script_url', DEFAULT_SCRIPT_URL);
+  } else {
+    state.scriptUrl = savedUrl || '';
+  }
+
   state.employeeId   = localStorage.getItem('rao_employee_id')     || '';
   state.employeeName = localStorage.getItem('rao_employee_name')   || '';
 
@@ -595,11 +602,17 @@ async function submitMissingResult(result, foundQty, foundKey, targetTask) {
     }
   }
 
-  if (state.missing.currentTab === 'active') {
-    if (state.missing.tasks.length === 0) setMissingState('empty');
-    else renderMissingTask();
+  // Корректируем currentIndex, если он вышел за пределы массива оставшихся задач
+  if (state.missing.currentIndex >= state.missing.tasks.length) {
+    state.missing.currentIndex = Math.max(0, state.missing.tasks.length - 1);
+  }
+
+  // Обновляем отображение UI карточки и списка
+  if (state.missing.tasks.length === 0) {
+    setMissingState('empty');
   } else {
-    renderRazborList();
+    renderMissingTask();
+    renderTaskList();
   }
 
   // 2. Фоновая отправка на сервер

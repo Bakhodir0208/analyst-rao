@@ -1,4 +1,4 @@
-const CACHE = 'rao-v1';
+const CACHE = 'rao-v2';
 const ASSETS = ['./', './index.html', './index.css', './app.js'];
 
 self.addEventListener('install', e => {
@@ -16,12 +16,18 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  // Network-first for API calls, cache-first for assets
   if (e.request.url.includes('script.google.com')) {
     e.respondWith(fetch(e.request).catch(() => new Response('{"success":false,"error":"Offline"}')));
   } else {
+    // Network-first strategy to ensure fresh code releases
     e.respondWith(
-      caches.match(e.request).then(r => r || fetch(e.request))
+      fetch(e.request).then(response => {
+        if (response && response.status === 200) {
+          const clone = response.clone();
+          caches.open(CACHE).then(cache => cache.put(e.request, clone));
+        }
+        return response;
+      }).catch(() => caches.match(e.request))
     );
   }
 });
