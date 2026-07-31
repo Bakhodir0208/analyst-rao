@@ -225,7 +225,12 @@ function jsonOk(data) {
 function parseToDateStr(val, tz) {
   if (!val) return '';
   if (val instanceof Date) {
-    return Utilities.formatDate(val, tz, 'dd.MM.yyyy');
+    var year  = val.getFullYear();
+    var month = String(val.getMonth() + 1);
+    if (month.length < 2) month = '0' + month;
+    var day   = String(val.getDate());
+    if (day.length < 2) day = '0' + day;
+    return day + '.' + month + '.' + year;
   }
   var s = String(val).trim();
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
@@ -238,7 +243,12 @@ function parseToDateStr(val, tz) {
   try {
     var d = new Date(s);
     if (!isNaN(d.getTime())) {
-      return Utilities.formatDate(d, tz, 'dd.MM.yyyy');
+      var year  = d.getFullYear();
+      var month = String(d.getMonth() + 1);
+      if (month.length < 2) month = '0' + month;
+      var day   = String(d.getDate());
+      if (day.length < 2) day = '0' + day;
+      return day + '.' + month + '.' + year;
     }
   } catch(e) {}
   return s;
@@ -604,6 +614,19 @@ function onOpen() {
     .addSeparator()
     .addItem('Инициализация листов', 'initSheets')
     .addToUi();
+}
+
+/**
+ * Автоматический триггер при ручном редактировании ячеек (например, добавление Доп работ)
+ */
+function onEdit(e) {
+  try {
+    if (!e || !e.range) return;
+    var sheetName = e.range.getSheet().getName();
+    if (sheetName.indexOf('Доп работы') === 0 || sheetName.indexOf('Лог обработки') === 0) {
+      updateSummarySheet(e.range.getSheet().getParent());
+    }
+  } catch(err) {}
 }
 
 // ═══════════════════════════════════════════════════════
