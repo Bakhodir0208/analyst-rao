@@ -271,7 +271,6 @@ function getOrCreateExtraWorkSheet(ss, monthName) {
     sheet = ss.insertSheet(sheetName);
     var headers = ['Дата', 'ФИО Сотрудника', 'Чем занимался', 'Сколько часов'];
     sheet.appendRow(headers);
-
     var hRange = sheet.getRange(1, 1, 1, headers.length);
     hRange.setFontWeight('bold')
           .setBackground('#0d2137')
@@ -287,66 +286,15 @@ function getOrCreateExtraWorkSheet(ss, monthName) {
   return sheet;
 }
 
-/**
- * GET: getPlanPercent
- * Рассчитывает и возвращает процент выполнения за СЕГОДНЯ (или за последний рабочий день)
- */
-function handleGetPlanPercent(employeeId) {
-  if (!employeeId) {
-    return jsonOk({ success: false, error: 'ID не указан' });
+function buildHeaderMap(sheet) {
+  var map = {};
+  if (!sheet || sheet.getLastRow() < 1) return map;
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  for (var i = 0; i < headers.length; i++) {
+    var h = String(headers[i] || '').toLowerCase().trim();
+    if (h) map[h] = i;
   }
-
-  var ss       = SpreadsheetApp.getActiveSpreadsheet();
-  var empSheet = ss.getSheetByName(SHEET_EMPLOYEES);
-  if (!empSheet) return jsonOk({ success: true, percent: 0 });
-
-  var empLastRow = empSheet.getLastRow();
-  if (empLastRow < 2) return jsonOk({ success: true, percent: 0 });
-
-  var empData      = empSheet.getRange(2, 1, empLastRow - 1, 2).getValues();
-  var employeeName = null;
-  for (var i = 0; i < empData.length; i++) {
-    if (String(empData[i][0]).trim() === String(employeeId).trim()) {
-      employeeName = String(empData[i][1]).trim();
-      break;
-    }
-  }
-  if (!employeeName) return jsonOk({ success: true, percent: 0 });
-
-  var tz          = Session.getScriptTimeZone();
-  var todayStr    = Utilities.formatDate(new Date(), tz, 'dd.MM.yyyy');
-  var logSheet    = getOrCreateMissingLogSheet(ss);
-  var logLastRow  = logSheet.getLastRow();
-
-  var currentMonthName = MONTHS_RU[new Date().getMonth()];
-  var extraSheet       = getOrCreateExtraWorkSheet(ss, currentMonthName);
-  var extraWorkRows    = (extraSheet && extraSheet.getLastRow() >= 2)
-    ? extraSheet.getRange(2, 1, extraSheet.getLastRow() - 1, 4).getValues()
-    : [];
-
-  var logRows = (logLastRow >= 2)
-    ? logSheet.getRange(2, 1, logLastRow - 1, 16).getValues()
-    : [];
-
-  var percent = calculateEmployeeDailyPercent(employeeName, todayStr, logRows, extraWorkRows);
-
-  // Если за сегодня ещё нет записей — берём процент за самый свежий рабочий день
-  if (percent === 0 && logRows.length > 0) {
-    var empLower = employeeName.toLowerCase().trim();
-    for (var i = logRows.length - 1; i >= 0; i--) {
-      var rowEmp = String(logRows[i][2] || '').toLowerCase().trim();
-      if (rowEmp === empLower && logRows[i][0]) {
-        var latestDateStr = parseToDateStr(logRows[i][0], tz);
-        var latestPercent = calculateEmployeeDailyPercent(employeeName, latestDateStr, logRows, extraWorkRows);
-        if (latestPercent > 0) {
-          percent = latestPercent;
-          break;
-        }
-      }
-    }
-  }
-
-  return jsonOk({ success: true, percent: percent });
+  return map;
 }
 
 /**
@@ -358,7 +306,7 @@ function handleGetPlanPercent(employeeId) {
  * - Обработка БезШК: 0.66% за каждый УНИКАЛЬНЫЙ ШК сотрудника за данный день
  * - Доп работы: 9.09% за каждый ЧАС работы
  */
-function calculateEmployeeDailyPercent(employeeName, targetDateStr, logRows, extraWorkRows) {
+function calculateEmployeeDailyPercent(employeeName, targetDateStr, logRows, extraWorkRows, logHeaderMap, extraHeaderMap) {
   if (!employeeName || !targetDateStr) return 0;
 
   var empLower = employeeName.toLowerCase().trim();
@@ -370,15 +318,46 @@ function calculateEmployeeDailyPercent(employeeName, targetDateStr, logRows, ext
   if (logRows && logRows.length > 0) {
     for (var i = 0; i < logRows.length; i++) {
       var row = logRows[i];
-      var rowEmp = String(row[2] || '').toLowerCase().trim(); // Col C: ФИО
+      if (!row || row.length === 0) continue;
+
+      // Находим колонку ФИО
+      var colEmp = (logHeaderMap && logHeaderMap['фио'] !== undefined) ? logHeaderMap['фио'] : 2;
+      var rowEmp = String(row[colEmp] !== undefined ? row[colEmp] : (row[2] || '')).toLowerCase().trim();
       if (rowEmp !== empLower) continue;
 
-      var rowDateStr = parseToDateStr(row[0], tz); // Col A: Дата/Время
+      // Находим колонку даты
+      var colDate = (logHeaderMap && logHeaderMap['дата/время'] !== undefined) ? logHeaderMap['дата/время'] : 0;
+      var rowDateStr = parseToDateStr(row[colDate] !== undefined ? row[colDate] : row[0], tz);
       if (rowDateStr !== targetDateStr) continue;
 
-      var workType = String(row[13] || '').trim(); // Col N: Тип работы
-      var res      = String(row[10] || '').trim(); // Col K: Результат
-      var barcode  = String(row[3] || '').trim();  // Col D: ШК
+      // Ищем результат в названной колонке или универсально сканируем ячейки строки
+      var res = '';
+      if (logHeaderMap && logHeaderMap['результат'] !== undefined) {
+        res = String(row[logHeaderMap['результат']] || '').trim();
+      }
+      if (!res) {
+        for (var c = 0; c < row.length; c++) {
+          var valStr = String(row[c] || '').trim();
+          if (valStr === 'Найдено' || valStr === 'Найдено + ошибка' || valStr === 'Не найдено + ошибка' || valStr === 'Обработка БезШК') {
+            res = valStr;
+            break;
+          }
+        }
+      }
+
+      var workType = '';
+      if (logHeaderMap && logHeaderMap['тип работы'] !== undefined) {
+        workType = String(row[logHeaderMap['тип работы']] || '').trim();
+      } else {
+        workType = String(row[row.length - 1] || '').trim();
+      }
+
+      var barcode = '';
+      if (logHeaderMap && logHeaderMap['шк'] !== undefined) {
+        barcode = String(row[logHeaderMap['шк']] || '').trim();
+      } else {
+        barcode = String(row[3] || '').trim();
+      }
 
       if (res === 'Найдено') {
         totalPercent += 4.16;
@@ -399,13 +378,20 @@ function calculateEmployeeDailyPercent(employeeName, targetDateStr, logRows, ext
   if (extraWorkRows && extraWorkRows.length > 0) {
     for (var j = 0; j < extraWorkRows.length; j++) {
       var exRow = extraWorkRows[j];
-      var exEmp = String(exRow[1] || '').toLowerCase().trim(); // Col B: ФИО Сотрудника
+      if (!exRow || exRow.length === 0) continue;
+
+      var colExEmp = (extraHeaderMap && extraHeaderMap['фио сотрудника'] !== undefined) ? extraHeaderMap['фио сотрудника'] : ((extraHeaderMap && extraHeaderMap['фио'] !== undefined) ? extraHeaderMap['фио'] : 1);
+      var colExDate = (extraHeaderMap && extraHeaderMap['дата'] !== undefined) ? extraHeaderMap['дата'] : 0;
+      var colExHours = (extraHeaderMap && extraHeaderMap['сколько часов'] !== undefined) ? extraHeaderMap['сколько часов'] : 3;
+
+      var exEmp = String(exRow[colExEmp] !== undefined ? exRow[colExEmp] : (exRow[1] || '')).toLowerCase().trim();
       if (exEmp !== empLower) continue;
 
-      var exDateStr = parseToDateStr(exRow[0], tz); // Col A: Дата
+      var exDateStr = parseToDateStr(exRow[colExDate] !== undefined ? exRow[colExDate] : exRow[0], tz);
       if (exDateStr !== targetDateStr) continue;
 
-      var hours = parseFloat(String(exRow[3] || '').replace(',', '.')) || 0; // Col D: Сколько часов
+      var rawHours = exRow[colExHours] !== undefined ? exRow[colExHours] : exRow[3];
+      var hours = parseFloat(String(rawHours || '').replace(',', '.')) || 0;
       if (hours > 0) {
         totalPercent += (hours * 9.09);
       }
