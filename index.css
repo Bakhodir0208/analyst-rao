@@ -48,12 +48,25 @@
   --font:           'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-/* ── Reset ── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-button { font-family: var(--font); }
+/* ── Reset & Hide Scrollbars ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  -ms-overflow-style: none; /* IE / Edge */
+  scrollbar-width: none;   /* Firefox */
+}
 
-/* ── Base ── */
-html, body { height: 100%; }
+*::-webkit-scrollbar,
+body::-webkit-scrollbar,
+html::-webkit-scrollbar,
+div::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+}
 
 body {
   font-family: var(--font);
