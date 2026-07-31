@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="РАО — Система учёта рабочих операций складских сотрудников">
+  <title>РАО — Рабочие Операции</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="index.css">
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#080c15">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icon-192.png">
+
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+          .then(reg => {
+            reg.onupdatefound = () => {
+              const w = reg.installing;
+              w.onstatechange = () => {
+                if (w.state === 'installed' && navigator.serviceWorker.controller) {
+                  window.location.reload();
+                }
+              };
+            };
+          })
+          .catch(err => console.error('SW Error:', err));
+      });
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!refreshing) { refreshing = true; window.location.reload(); }
+      });
+    }
+  </script>
+</head>
+<body>
+
+  <div class="app-container">
+
+    <!-- HEADER -->
+    <header class="app-header">
+      <!-- Прогресс выполнения плана -->
+      <div class="plan-display" id="planDisplay">
+        <div class="plan-ring-wrap">
+          <svg viewBox="0 0 36 36" width="42" height="42" style="position:absolute;top:0;left:0;transform:rotate(-90deg);">
+            <circle cx="18" cy="18" r="15.9" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="2.5"/>
+            <circle id="planRingFill" cx="18" cy="18" r="15.9" fill="none"
+                    stroke="var(--accent)" stroke-width="2.5"
+                    stroke-dasharray="0 100" stroke-linecap="round"/>
+          </svg>
+          <span class="plan-pct-text" id="planPctText">—</span>
+        </div>
+        <div class="plan-label-wrap">
+          <div class="plan-label-title">Выполнение</div>
+          <div class="plan-label-sub">плана</div>
+        </div>
+      </div>
+      <!-- ФИО сотрудника -->
+      <div class="welcome-chip" id="welcomeChip"></div>
+    </header>
+
+    <!-- LOADER -->
+    <div class="loader-overlay" id="loaderOverlay">
+      <div class="spinner"></div>
+      <span id="loaderText">Загрузка...</span>
+    </div>
+
+    <!-- TOASTS -->
+    <div class="toast toast-error"   id="toastError"></div>
+    <div class="toast toast-success" id="toastSuccess"></div>
+
+    <!-- SCREEN 1: НАСТРОЙКИ -->
+    <main class="screen active" id="screen-settings">
+      <div class="screen-intro">
+        <div class="screen-icon icon-accent">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+        </div>
+        <h2 class="screen-title">Настройка</h2>
+        <p class="screen-subtitle">Введите URL вашего веб-приложения Google Apps Script для подключения к базе данных</p>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="scriptUrlInput">URL Google Apps Script</label>
+        <input class="input-field" type="url" id="scriptUrlInput"
+               placeholder="https://script.google.com/macros/s/.../exec"
+               autocomplete="off" autocorrect="off" spellcheck="false">
+        <div class="input-hint">Разверните скрипт как веб-приложение и вставьте URL</div>
+      </div>
+
+      <div class="btn-stack">
+        <button class="btn btn-primary" id="btnSaveSettings">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M5 12l5 5L20 7"/>
+          </svg>
+          Подключиться
+        </button>
+        <button class="btn btn-ghost btn-ghost-danger" id="btnClearCache">
+          Сбросить кэш приложения
+        </button>
+      </div>
+    </main>
+
+    <!-- SCREEN 2: АВТОРИЗАЦИЯ -->
+    <main class="screen" id="screen-login">
+      <div class="screen-intro">
+        <div class="screen-icon icon-accent">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+        <h2 class="screen-title">Авторизация</h2>
+        <p class="screen-subtitle">Введите ваш персональный ID для входа в систему</p>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="employeeIdInput">ID Сотрудника</label>
+        <input class="input-field input-hero" type="text" id="employeeIdInput"
+               placeholder="0000" inputmode="numeric" autocomplete="off">
+      </div>
+
+      <div class="btn-stack">
+        <button class="btn btn-primary" id="btnLogin">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>
+          </svg>
+          Войти в систему
+        </button>
+        <button class="btn btn-ghost" id="btnBackToSettings">
+          Изменить подключение
+        </button>
+      </div>
+    </main>
+
+    <!-- SCREEN 3: ДАШБОРД -->
+    <main class="screen" id="screen-dashboard">
+      <div class="dashboard-header">
+        <h2 class="screen-title">Тип работы</h2>
+        <p class="screen-subtitle">Выберите задачу для начала работы</p>
+      </div>
+
+      <div class="work-grid">
+
+        <button class="work-card" id="btnMissing" data-type="missing">
+          <div class="work-card-icon icon-missing">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8"/>
+              <path d="m21 21-4.35-4.35"/>
+              <path d="M11 8v6M8 11h6" opacity="0.6"/>
+            </svg>
+          </div>
+          <div class="work-card-body">
+            <div class="work-card-title">Поиск Миссинга</div>
+          </div>
+          <div class="work-card-chevron">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M9 18l6-6-6-6"/>
+            </svg>
+          </div>
+        </button>
+
+        <button class="work-card" id="btnBezShk" data-type="bezshk">
+          <div class="work-card-icon icon-bezshk">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M7 7h2v2H7zM7 11h2v2H7zM7 15h2v2H7z"/>
+              <path d="M13 7h4M13 11h4M13 15h4"/>
+            </svg>
+          </div>
+          <div class="work-card-body">
+            <div class="work-card-title">Обработка БезШК</div>
+          </div>
+          <div class="work-card-chevron">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M9 18l6-6-6-6"/>
+            </svg>
+          </div>
+        </button>
+
+        <button class="work-card" id="btnBP" data-type="bp">
+          <div class="work-card-icon icon-bp">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <circle cx="12" cy="12" r="4"/>
+              <line x1="12" y1="2" x2="12" y2="8"/>
+              <line x1="12" y1="16" x2="12" y2="22"/>
+              <line x1="2" y1="12" x2="8" y2="12"/>
+              <line x1="16" y1="12" x2="22" y2="12"/>
+            </svg>
+          </div>
+          <div class="work-card-body">
+            <div class="work-card-title">Поиск БП</div>
+          </div>
+          <div class="work-card-chevron">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M9 18l6-6-6-6"/>
+            </svg>
+          </div>
+        </button>
+
+      </div>
+
+      <button class="btn btn-ghost" id="btnLogout" style="margin-top: auto; flex-shrink: 0;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+        </svg>
+        Сменить пользователя
+      </button>
+    </main>
+
+    <!-- SCREEN 4a: ПОИСК МИССИНГА -->
+    <main class="screen" id="screen-missing">
+
+      <!-- HEADER -->
+      <div class="work-screen-header">
+        <button class="back-btn" id="btnBackFromMissing" aria-label="Назад">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <span class="work-tag tag-missing">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          Поиск Миссинга
+        </span>
+        <!-- Бэдж «На разборе» (скрыт если нет) -->
+        <button class="razbor-badge" id="btnOpenRazbor" style="display:none;" title="Открыть список «На разборе»">
+          🔎 <span id="razborCount">0</span>
+        </button>
+      </div>
+
+      <!-- STATE: загрузка -->
+      <div id="missing-loading" class="missing-state">
+        <div class="spinner spinner-sm"></div>
+        <span class="missing-state-hint">Загрузка задач...</span>
+      </div>
+
+      <!-- STATE: задачи не назначены -->
+      <div id="missing-empty" class="missing-state" style="display:none;">
+        <div class="placeholder-icon-wrap icon-missing">
+          <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35M11 8v3M11 14h.01"/></svg>
+        </div>
+        <h3 class="placeholder-title">Задачи не назначены</h3>
+        <p class="placeholder-desc">Администратор ещё не распределил позиции.<br>Обратитесь к нему или обновите список.</p>
+        <button class="btn btn-ghost" id="btnMissingRefresh" style="width:100%;margin-top:6px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38"/></svg>
+          Обновить
+        </button>
+      </div>
+
+      <!-- STATE: задачи (карточка + список) -->
+      <div id="missing-tasks" class="missing-tasks-wrap" style="display:none;">
+
+        <!-- Прогресс -->
+        <div class="task-progress">
+          <div class="task-progress-labels">
+            <span id="missing-progress-text">Задача 1 из 1</span>
+            <span id="missing-progress-pct">0%</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill missing-fill" id="missing-progress-bar"></div>
+          </div>
+        </div>
+
+        <!-- CARD VIEW -->
+        <div id="missing-card-view">
+
+          <!-- Карточка товара -->
+          <div class="task-card-missing">
+            <div class="task-name" id="missing-name">—</div>
+            <div class="task-info-grid">
+              <div class="info-row">
+                <span class="info-key">ШК</span>
+                <div class="info-val-group">
+                  <button class="copy-btn monospace" id="missing-barcode" title="Нажмите для копирования">
+                    <span class="copy-val" id="missing-barcode-text">—</span>
+                    <svg class="copy-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                  <a href="#" target="_blank" rel="noopener" class="wms-btn" id="missing-wms-link" title="Открыть товар в WMS">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+                    WMS
+                  </a>
+                </div>
+              </div>
+              <div class="info-row">
+                <span class="info-key">Ячейка</span>
+                <button class="copy-btn monospace" id="missing-key" title="Нажмите для копирования">
+                  <span class="copy-val" id="missing-key-text">—</span>
+                  <svg class="copy-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+              </div>
+              <div class="info-row">
+                <span class="info-key">Зона</span>
+                <span class="info-val" id="missing-zone">—</span>
+              </div>
+              <div class="info-row">
+                <span class="info-key">Процесс</span>
+                <span class="info-val" id="missing-process">—</span>
+              </div>
+              <div class="info-row">
+                <span class="info-key">Категория</span>
+                <span class="info-val" id="missing-category">—</span>
+              </div>
+              <div class="info-row">
+                <span class="info-key">Кол-во</span>
+                <span class="info-val" id="missing-qty">—</span>
+              </div>
+              <div class="info-row info-row-price">
+                <span class="info-key">Сумма</span>
+                <span class="info-val info-val-price" id="missing-price">—</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Переключатель на список -->
+          <button class="btn-list-toggle" id="btnShowList">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            Список задач
+          </button>
+
+          <!-- Кнопки результата 2×2 -->
+          <div class="result-grid">
+            <button class="result-btn btn-found"        id="rbFound"       data-result="Найдено">✅ Найдено</button>
+            <button class="result-btn btn-notfound"     id="rbNotFound"    data-result="Не найдено">❌ Не найдено</button>
+            <button class="result-btn btn-found-err"    id="rbFoundErr"    data-result="Найдено + ошибка">✅⚠ Найдено + ошибка</button>
+            <button class="result-btn btn-notfound-err" id="rbNotFoundErr" data-result="Не найдено + ошибка">❌⚠ Не найдено + ошибка</button>
+          </div>
+
+          <!-- Кнопка «На разбор» — полная ширина -->
+          <button class="result-btn btn-razbor" id="rbRazbor" data-result="На разбор">
+            🔎 На разбор — отложить для анализа
+          </button>
+
+        </div><!-- /missing-card-view -->
+
+        <!-- LIST VIEW (скрыт по умолчанию) -->
+        <div id="missing-list-view" style="display:none;">
+          <div class="list-view-header">
+            <span class="list-view-title">Все задачи</span>
+            <button class="btn-list-close" id="btnHideList">✕ Карточка</button>
+          </div>
+          <div class="task-list-items" id="taskListItems">
+            <!-- Генерируется JS -->
+          </div>
+        </div>
+
+      </div><!-- /missing-tasks -->
+
+      <!-- STATE: На разборе -->
+      <div id="missing-razbor" class="missing-tasks-wrap" style="display:none;">
+
+        <!-- Хэдер разбора -->
+        <div class="razbor-screen-header">
+          <button class="btn-razbor-back" id="btnCloseRazbor">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          </button>
+          <span class="razbor-screen-title">🔎 На разборе (<span id="razborListCount">0</span>)</span>
+        </div>
+
+        <!-- Список отложенных (по умолчанию) -->
+        <div id="razbor-list-view">
+          <div id="razborListItems" class="razbor-list-items">
+            <!-- Генерируется JS -->
+          </div>
+        </div>
+
+        <!-- Карточка выбранного разбор-товара (скрыта по умолчанию) -->
+        <div id="razbor-card-view" style="display:none;">
+          <button class="btn-razbor-back-to-list" id="btnBackToRazborList">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            Назад к списку
+          </button>
+
+          <div class="task-card-missing">
+            <div class="task-name" id="razbor-name">—</div>
+            <div class="task-info-grid">
+              <div class="info-row">
+                <span class="info-key">ШК</span>
+                <div class="info-val-group">
+                  <button class="copy-btn monospace" id="razbor-barcode" title="Нажмите для копирования">
+                    <span class="copy-val" id="razbor-barcode-text">—</span>
+                    <svg class="copy-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                  <a href="#" target="_blank" rel="noopener" class="wms-btn" id="razbor-wms-link" title="Открыть товар в WMS">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+                    WMS
+                  </a>
+                </div>
+              </div>
+              <div class="info-row"><span class="info-key">Ячейка</span><span class="info-val monospace" id="razbor-key">—</span></div>
+              <div class="info-row"><span class="info-key">Зона</span><span class="info-val" id="razbor-zone">—</span></div>
+              <div class="info-row"><span class="info-key">Процесс</span><span class="info-val" id="razbor-process">—</span></div>
+              <div class="info-row"><span class="info-key">Категория</span><span class="info-val" id="razbor-category">—</span></div>
+              <div class="info-row"><span class="info-key">Кол-во</span><span class="info-val" id="razbor-qty">—</span></div>
+              <div class="info-row info-row-price"><span class="info-key">Сумма</span><span class="info-val info-val-price" id="razbor-price">—</span></div>
+            </div>
+          </div>
+
+          <!-- Финальные кнопки для разбора -->
+          <div class="result-grid razbor-result-grid">
+            <button class="result-btn btn-found razbor-final-btn"        data-result="Найдено">✅ Найдено</button>
+            <button class="result-btn btn-notfound razbor-final-btn"     data-result="Не найдено">❌ Не найдено</button>
+            <button class="result-btn btn-found-err razbor-final-btn"    data-result="Найдено + ошибка">✅⚠ Найдено + ошибка</button>
+            <button class="result-btn btn-notfound-err razbor-final-btn" data-result="Не найдено + ошибка">❌⚠ Не найдено + ошибка</button>
+          </div>
+
+        </div><!-- /razbor-card-view -->
+
+      </div><!-- /missing-razbor -->
+
+      <!-- STATE: всё обработано -->
+      <div id="missing-done" class="missing-state" style="display:none;">
+        <div style="font-size:3.8rem;margin-bottom:6px;">🎉</div>
+        <h3 class="placeholder-title">Всё готово!</h3>
+        <p class="placeholder-desc">Вы обработали все назначенные позиции.<br>Отличная работа!</p>
+        <button class="btn btn-ghost" id="btnMissingBackToDash" style="width:100%;margin-top:6px;">На главную</button>
+      </div>
+
+      <!-- STATE: ошибка -->
+      <div id="missing-error" class="missing-state" style="display:none;">
+        <div style="font-size:2.8rem;margin-bottom:6px;">⚠️</div>
+        <h3 class="placeholder-title" style="font-size:1.1rem;">Ошибка загрузки</h3>
+        <p class="placeholder-desc" id="missing-error-msg">Проверьте подключение к интернету</p>
+        <button class="btn btn-ghost" id="btnMissingRetry" style="width:100%;margin-top:6px;">Попробовать снова</button>
+      </div>
+
+      <!-- BOTTOM SHEET: подтверждение действия -->
+      <div class="bottom-sheet-overlay" id="confirmOverlay" style="display:none;">
+        <div class="bottom-sheet" id="confirmSheet">
+          <div class="confirm-handle"></div>
+          <div class="confirm-title" id="confirmTitleText">Вы уверены, что хотите отметить товар?</div>
+          <div class="confirm-result-label" id="confirmResultLabel">—</div>
+
+          <!-- Поле ввода ячейки и количества для Найдено / Найдено + ошибка -->
+          <div class="confirm-found-details" id="confirmFoundWrap" style="display:none;">
+
+            <div class="confirm-field-group">
+              <label class="confirm-field-label" for="confirmFoundKeyInput">Где нашли (ячейка):</label>
+              <input type="text" class="confirm-text-input monospace" id="confirmFoundKeyInput" placeholder="M3.76.94.2.4">
+            </div>
+
+            <div class="confirm-field-group" style="margin-top: 12px;">
+              <label class="confirm-field-label">Количество найденного товара:</label>
+              <div class="confirm-qty-controls">
+                <button type="button" class="qty-btn" id="btnQtyMinus">−</button>
+                <input type="number" class="qty-input" id="confirmQtyInput" min="1" value="1">
+                <button type="button" class="qty-btn" id="btnQtyPlus">+</button>
+              </div>
+              <div class="confirm-qty-max-hint">Из <span id="confirmQtyMax">1</span> шт. по заданию</div>
+            </div>
+
+          </div>
+
+          <div class="confirm-buttons">
+            <button class="confirm-btn-cancel" id="btnConfirmCancel">Отменить</button>
+            <button class="confirm-btn-ok" id="btnConfirmOk">✓ Подтвердить</button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+
+    <!-- SCREEN 4b: ОБРАБОТКА БЕЗШК -->
+    <main class="screen" id="screen-bezshk">
+      <div class="work-screen-header">
+        <button class="back-btn" id="btnBackFromBezShk" aria-label="Назад">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <span class="work-tag tag-bezshk">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h2M7 12h2M13 7h4M13 12h4"/></svg>
+          Обработка БезШК
+        </span>
+      </div>
+
+      <div class="bezshk-container">
+        <div class="bezshk-card">
+
+          <div class="form-group">
+            <label class="form-label" for="bezshkBarcode">Штрихкод товара:</label>
+            <input type="text" id="bezshkBarcode" class="form-input bezshk-input monospace" placeholder="Отсканируйте или введите ШК" maxlength="13" inputmode="numeric">
+          </div>
+
+          <div class="form-group" style="margin-top: 18px;">
+            <label class="form-label">Количество:</label>
+            <div class="confirm-qty-controls">
+              <button type="button" class="qty-btn" id="btnBezshkQtyMinus">−</button>
+              <input type="number" class="qty-input" id="bezshkQty" min="1" value="1">
+              <button type="button" class="qty-btn" id="btnBezshkQtyPlus">+</button>
+            </div>
+          </div>
+
+          <div class="bezshk-actions-grid" style="margin-top: 22px;">
+            <button type="button" class="btn-bezshk-action btn-shortage" id="btnBezshkShortage">
+              ⚠️ MISSING/SHORTAGE
+            </button>
+            <button type="button" class="btn-bezshk-action btn-izlishek" id="btnBezshkIzlishek">
+              ➕ Излишек
+            </button>
+            <button type="button" class="btn-bezshk-action btn-brak" id="btnBezshkBrak">
+              🚨 MISSING / БРАК
+            </button>
+            <button type="button" class="btn-bezshk-action btn-compensated" id="btnBezshkCompensated">
+              💳 КОМПЕНСИРОВАН
+            </button>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ОКНО ПОДТВЕРЖДЕНИЯ (ПО ЦЕНТРУ) -->
+      <div class="center-modal-overlay" id="bezshkConfirmOverlay" style="display:none;">
+        <div class="center-modal-card">
+          <div class="confirm-title">Подтвердите запись БезШК</div>
+          <div class="confirm-result-label" id="bezshkConfirmResultLabel">—</div>
+
+          <div class="bezshk-confirm-summary" id="bezshkConfirmSummary">
+            <!-- Динамически заполняется JS -->
+          </div>
+
+          <div class="confirm-buttons">
+            <button type="button" class="confirm-btn-cancel" id="btnBezshkCancel">Отменить</button>
+            <button type="button" class="confirm-btn-ok" id="btnBezshkConfirmOk">✓ Подтвердить</button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- SCREEN 4c: ПОИСК БП -->
+    <main class="screen" id="screen-bp">
+      <div class="work-screen-header">
+        <button class="back-btn" id="btnBackFromBP" aria-label="Назад">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M19 12H5M12 19l-7-7 7-7"/>
+          </svg>
+        </button>
+        <span class="work-tag tag-bp">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle cx="12" cy="12" r="10"/>
+            <circle cx="12" cy="12" r="4"/>
+          </svg>
+          Поиск БП
+        </span>
+      </div>
+      <div class="placeholder-body">
+        <div class="placeholder-icon-wrap icon-bp">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="12" cy="12" r="10"/>
+            <circle cx="12" cy="12" r="4"/>
+            <line x1="12" y1="2" x2="12" y2="8"/>
+            <line x1="12" y1="16" x2="12" y2="22"/>
+            <line x1="2" y1="12" x2="8" y2="12"/>
+            <line x1="16" y1="12" x2="22" y2="12"/>
+          </svg>
+        </div>
+        <h3 class="placeholder-title">Поиск БП</h3>
+        <p class="placeholder-desc">Функционал раздела будет добавлен после уточнения условий работы.</p>
+        <div class="dev-chip">🔧 В разработке</div>
+      </div>
+    </main>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
