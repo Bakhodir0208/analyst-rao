@@ -286,6 +286,71 @@ function getOrCreateExtraWorkSheet(ss, monthName) {
   return sheet;
 }
 
+/**
+ * GET: getPlanPercent
+ * Рассчитывает и возвращает процент выполнения за СЕГОДНЯ (или за последний рабочий день)
+ */
+function handleGetPlanPercent(employeeId) {
+  if (!employeeId) {
+    return jsonOk({ success: false, error: 'ID не указан' });
+  }
+
+  var ss       = SpreadsheetApp.getActiveSpreadsheet();
+  var empSheet = ss.getSheetByName(SHEET_EMPLOYEES);
+  if (!empSheet) return jsonOk({ success: true, percent: 0 });
+
+  var empLastRow = empSheet.getLastRow();
+  if (empLastRow < 2) return jsonOk({ success: true, percent: 0 });
+
+  var empData      = empSheet.getRange(2, 1, empLastRow - 1, 2).getValues();
+  var employeeName = null;
+  for (var i = 0; i < empData.length; i++) {
+    if (String(empData[i][0]).trim() === String(employeeId).trim()) {
+      employeeName = String(empData[i][1]).trim();
+      break;
+    }
+  }
+  if (!employeeName) return jsonOk({ success: true, percent: 0 });
+
+  var tz          = Session.getScriptTimeZone();
+  var todayStr    = Utilities.formatDate(new Date(), tz, 'dd.MM.yyyy');
+  var logSheet    = getOrCreateMissingLogSheet(ss);
+  var logLastRow  = logSheet.getLastRow();
+
+  var currentMonthName = MONTHS_RU[new Date().getMonth()];
+  var extraSheet       = getOrCreateExtraWorkSheet(ss, currentMonthName);
+  var extraWorkRows    = (extraSheet && extraSheet.getLastRow() >= 2)
+    ? extraSheet.getRange(2, 1, extraSheet.getLastRow() - 1, extraSheet.getLastColumn()).getValues()
+    : [];
+
+  var logRows = (logLastRow >= 2)
+    ? logSheet.getRange(2, 1, logLastRow - 1, logSheet.getLastColumn()).getValues()
+    : [];
+
+  var logHeaderMap   = buildHeaderMap(logSheet);
+  var extraHeaderMap = buildHeaderMap(extraSheet);
+
+  var percent = calculateEmployeeDailyPercent(employeeName, todayStr, logRows, extraWorkRows, logHeaderMap, extraHeaderMap);
+
+  // Если за сегодня ещё нет записей — берём процент за самый свежий рабочий день
+  if (percent === 0 && logRows.length > 0) {
+    var empLower = employeeName.toLowerCase().trim();
+    for (var i = logRows.length - 1; i >= 0; i--) {
+      var rowEmp = String(logRows[i][2] || '').toLowerCase().trim();
+      if (rowEmp === empLower && logRows[i][0]) {
+        var latestDateStr = parseToDateStr(logRows[i][0], tz);
+        var latestPercent = calculateEmployeeDailyPercent(employeeName, latestDateStr, logRows, extraWorkRows, logHeaderMap, extraHeaderMap);
+        if (latestPercent > 0) {
+          percent = latestPercent;
+          break;
+        }
+      }
+    }
+  }
+
+  return jsonOk({ success: true, percent: percent });
+}
+
 function buildHeaderMap(sheet) {
   var map = {};
   if (!sheet || sheet.getLastRow() < 1) return map;
