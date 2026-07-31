@@ -460,6 +460,13 @@ function setMissingState(name, message) {
  * Рендерит карточку текущего товара и обновляет прогресс-бар.
  */
 function renderMissingTask() {
+  const cardEl = document.getElementById('missing-card-view');
+  if (cardEl) {
+    cardEl.classList.remove('card-refresh-flash');
+    void cardEl.offsetHeight; // Force reflow
+    cardEl.classList.add('card-refresh-flash');
+  }
+
   const tasks = state.missing.tasks;
   const idx   = state.missing.currentIndex;
   const task  = tasks[idx];
@@ -606,6 +613,9 @@ async function submitMissingResult(result, foundQty, foundKey, targetTask) {
   if (state.missing.currentIndex >= state.missing.tasks.length) {
     state.missing.currentIndex = Math.max(0, state.missing.tasks.length - 1);
   }
+
+  // Показываем мгновенное пуш-уведомление
+  showSuccess('Запись сохранена! ✅');
 
   // Обновляем отображение UI карточки и списка
   if (state.missing.tasks.length === 0) {
