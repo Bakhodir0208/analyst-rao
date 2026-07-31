@@ -538,15 +538,73 @@ function copyFallback(str, onSuccess) {
  * Отправляет результат (Найдено / Не найдено / + ошибка / На разбор) на сервер.
  * @param {string} result - значение кнопки (data-result)
  */
-async function submitMissingResult(result, foundQty, foundKey) {
-  const task = state.missing.tasks[state.missing.currentIndex];
+async function submitMissingResult(result, foundQty, foundKey, targetTask) {
+  const task = targetTask || state.missing.tasks[state.missing.currentIndex];
   if (!task) return;
 
-  // Блокируем кнопки
-  document.querySelectorAll('.result-btn').forEach(b => { b.disabled = true; });
+  // 1. Оптимистичное удаление/обновление локального состояния
+  state.missing.tasks = state.missing.tasks.map(t => {
+    if (t.row === task.row) {
+      const item = {
+        ...t,
+        result: result,
+        priceUnit: t.priceUnit || (t.priceTotal / (t.qty || 1)),
+        foundKey: foundKey || t.key || '',
+        priceTotal: t.priceTotal,
+        qty: t.qty || 1,
+        row: t.row,
+        barcode: t.barcode,
+        name: t.name,
+        zone: t.zone,
+        category: t.category,
+        process: t.process,
+        key: t.key
+      };
+      if (foundKey && String(foundKey).trim()) item.key = String(foundKey).trim();
+      return item;
+    }
+    return t;
+  }).filter(t => result === 'На разбор' || t.result === 'На разбор' || !t.result);
 
+  state.missing.razborTasks = state.missing.razborTasks.map(t => {
+    if (t.row === task.row) {
+      const item = {
+        ...t,
+        result: result,
+        priceUnit: t.priceUnit || (t.priceTotal / (t.qty || 1)),
+        foundKey: foundKey || t.key || '',
+        priceTotal: t.priceTotal,
+        qty: t.qty || 1,
+        row: t.row,
+        barcode: t.barcode,
+        name: t.name,
+        zone: t.zone,
+        category: t.category,
+        process: t.process
+      };
+      if (foundKey && String(foundKey).trim()) item.key = String(foundKey).trim();
+      return item;
+    }
+    return t;
+  });
+
+  if (result === 'На разбор') {
+    if (!state.missing.razborTasks.some(t => t.row === task.row)) {
+      state.missing.razborTasks.push({ ...task, result: 'На разбор' });
+      updateRazborBadge();
+    }
+  }
+
+  if (state.missing.currentTab === 'active') {
+    if (state.missing.tasks.length === 0) setMissingState('empty');
+    else renderMissingTask();
+  } else {
+    renderRazborList();
+  }
+
+  // 2. Фоновая отправка на сервер
   try {
-    await apiPost({
+    const res = await apiPost({
       action:       'logMissingResult',
       employeeId:   state.employeeId,
       employeeName: state.employeeName,
@@ -564,43 +622,11 @@ async function submitMissingResult(result, foundQty, foundKey) {
       qty:          task.qty,
       row:          task.row,
     });
-
-    if (result === 'На разбор') {
-      task.result = 'На разбор';
-      if (!state.missing.razborTasks.some(t => t.row === task.row)) {
-        state.missing.razborTasks.push(task);
-      }
-      updateRazborBadge();
-      showSuccess('Отложено на разбор!');
-
-      // Находим следующую необработанную позицию
-      let nextIdx = state.missing.tasks.findIndex((t, i) => i > state.missing.currentIndex && !t.result);
-      if (nextIdx === -1) nextIdx = state.missing.tasks.findIndex(t => !t.result);
-      if (nextIdx !== -1) state.missing.currentIndex = nextIdx;
-
-      renderMissingTask();
-    } else {
-      showSuccess('Результат записан!');
-      fetchPlanPercent();
-      // Финальный результат → удаляем из списка активных задач
-      state.missing.tasks = state.missing.tasks.filter(t => t.row !== task.row);
-      state.missing.razborTasks = state.missing.razborTasks.filter(t => t.row !== task.row);
-      updateRazborBadge();
-
-      if (state.missing.tasks.length === 0) {
-        setMissingState('done');
-      } else {
-        if (state.missing.currentIndex >= state.missing.tasks.length) {
-          state.missing.currentIndex = 0;
-        }
-        renderMissingTask();
-      }
-    }
+    fetchPlanPercent();
+    return res;
   } catch (err) {
-    showError('Ошибка записи результата. Попробуйте ещё раз.');
-    console.error('[Missing] submit error:', err);
-  } finally {
-    document.querySelectorAll('.result-btn').forEach(b => { b.disabled = false; });
+    console.error('[Missing] background submit error:', err);
+    showError('Ошибка связи с сервером при отправке!');
   }
 }
 
