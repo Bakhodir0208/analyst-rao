@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════
 //  CONFIGURATION
 // ═══════════════════════════════════════════
-const DEFAULT_SCRIPT_URL = ''; // оставьте пустым, пользователь вводит сам
+const DEFAULT_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyVXJMkDo1w9cvKvxtbsTwb7lsrPT3vV_DwCcCsEyyuB26AmVtKTIzzd3jeRQMNJPDy/exec';
 
 // ═══════════════════════════════════════════
 //  GLOBAL STATE
