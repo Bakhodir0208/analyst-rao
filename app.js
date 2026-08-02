@@ -235,28 +235,44 @@ function updatePlanDisplay() {
 // ═══════════════════════════════════════════
 //  API HELPERS
 // ═══════════════════════════════════════════
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timer);
+    return resp;
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') {
+      throw new Error('Превышено время ожидания ответа сервера (таймаут)');
+    }
+    throw err;
+  }
+}
+
 async function apiGet(params) {
   const url = new URL(state.scriptUrl);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
-  const resp = await fetch(url.toString(), {
+  const resp = await fetchWithTimeout(url.toString(), {
     method: 'GET',
     redirect: 'follow',
     cache: 'no-cache',
-  });
+  }, 15000);
 
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json();
 }
 
 async function apiPost(data) {
-  const resp = await fetch(state.scriptUrl, {
+  const resp = await fetchWithTimeout(state.scriptUrl, {
     method: 'POST',
     redirect: 'follow',
     cache: 'no-cache',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(data),
-  });
+  }, 15000);
 
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json();
@@ -947,7 +963,9 @@ async function submitRazborFinalResult(result, task, foundQty, foundKey) {
       employeeName: state.employeeName,
       barcode:      task.barcode,
       name:         task.name,
-      zone:         task.zone,
+      zone:         task.zone || '',
+      category:     task.category || '',
+      process:      task.process || '',
       key:          task.key,
       result:       result,
       foundQty:     foundQty || null,
@@ -1065,14 +1083,13 @@ async function submitRazborFinalResult(result, task, foundQty, foundKey) {
     });
   }
 
-  // Сканер Enter на поле ШК БезШК
+  // Сканер Enter на поле ШК БезШК (без вызова blur, предотвращает зависание TSD)
   const bBcInput = document.getElementById('bezshkBarcode');
   if (bBcInput) {
     bBcInput.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') {
         e.preventDefault();
         e.stopPropagation();
-        this.blur();
       }
     });
   }
@@ -1104,7 +1121,9 @@ function initBezShkScreen() {
   const qtyInput = document.getElementById('bezshkQty');
   if (bcInput) {
     bcInput.value = '';
-    setTimeout(() => bcInput.focus(), 150);
+    setTimeout(() => {
+      try { bcInput.focus(); } catch(e) {}
+    }, 150);
   }
   if (qtyInput) qtyInput.value = 1;
   hideBezshkConfirmation();
@@ -1114,11 +1133,13 @@ function handleBezshkAction(resultType) {
   const bcInput = document.getElementById('bezshkBarcode');
   const qtyInput = document.getElementById('bezshkQty');
 
-  const barcode = bcInput ? bcInput.value.trim() : '';
-  const qty = qtyInput ? (parseInt(qtyInput.value) || 1) : 1;
+  // Очистка от переносов строк, пробелов и управляющих символов сканера
+  const rawValue = bcInput ? bcInput.value : '';
+  const barcode  = rawValue.replace(/[^\d]/g, '').trim();
+  const qty      = qtyInput ? (parseInt(qtyInput.value) || 1) : 1;
 
-  // Валидация: строго 13 цифр
-  if (!/^\d{13}$/.test(barcode)) {
+  // Проверка корректности ШК (допускается от 7 до 15 цифр, охватывает все стандартные штрихкоды)
+  if (!barcode || barcode.length < 7 || barcode.length > 15) {
     showError('Штрих код введен не правильно');
     highlightInvalidInput(bcInput);
     return;
@@ -1137,9 +1158,13 @@ function showBezshkConfirmation() {
   const overlay   = document.getElementById('bezshkConfirmOverlay');
 
   if (labelEl) {
-    labelEl.textContent = (state.bezshk.pendingResult === 'Излишек')
-      ? '➕ Излишек'
-      : '⚠️ MISSING/SHORTAGE';
+    const resMap = {
+      'Излишек':          '➕ Излишек',
+      'MISSING/SHORTAGE': '⚠️ MISSING/SHORTAGE',
+      'MISSING / БРАК':   '🚨 MISSING / БРАК',
+      'КОМПЕНСИРОВАН':    '💳 КОМПЕНСИРОВАН'
+    };
+    labelEl.textContent = resMap[state.bezshk.pendingResult] || state.bezshk.pendingResult;
   }
 
   if (summaryEl) {
@@ -1176,13 +1201,19 @@ async function confirmAndSubmitBezshk() {
     if (res && res.success) {
       showSuccess('Запись БезШК сохранена!');
       hideBezshkConfirmation();
+      const bcInput = document.getElementById('bezshkBarcode');
+      const qtyInput = document.getElementById('bezshkQty');
+      if (bcInput) bcInput.value = '';
+      if (qtyInput) qtyInput.value = 1;
+      setTimeout(() => {
+        try { if (bcInput) bcInput.focus(); } catch(e) {}
+      }, 100);
       fetchPlanPercent();
-      initBezShkScreen(); // Сброс для следующего сканирования
     } else {
       showError(res && res.error ? res.error : 'Ошибка записи!');
     }
   } catch(e) {
-    showError('Ошибка соединения с сервером');
+    showError(e.message || 'Ошибка соединения с сервером');
   } finally {
     if (btnOk) btnOk.disabled = false;
     if (btnCancel) btnCancel.disabled = false;

@@ -688,7 +688,7 @@ function onEdit(e) {
 var SHEET_MISSING          = 'На поиск';
 var SHEET_LOG_MISSING_PFX  = 'Лог обработки - ';
 
-// ── Колонки листа «На поиск» (0-based индексы) ─────────
+// ── Колонки листа «На поиск» (дефолтные 0-based индексы) ─────────
 var MC_BARCODE    = 0;   // A: ШК
 var MC_PRICE_EA   = 1;   // B: Цена Продажи (единица)
 var MC_PRICE_ALL  = 2;   // C: Цена все товар (итог — для распределения)
@@ -698,10 +698,57 @@ var MC_PROCESS    = 5;   // F: Процесс
 var MC_ZONE       = 6;   // G: Зона
 var MC_WAREHOUSE  = 7;   // H: Склад
 var MC_KEY        = 8;   // I: key (ячейка)
-var MC_CATEGORY   = 12;  // M: h1_title
+var MC_CATEGORY   = 12;  // M: h1_title / Категория
 var MC_ASSIGNEE   = 13;  // N: У кого задана
 var MC_RESULT     = 14;  // O: Статус/Результат
 var MC_FLAG       = 15;  // P: Флажок (TRUE = финально обработан)
+
+/**
+ * Динамическое определение индексов колонок листа «На поиск» по заголовкам (первая строка)
+ */
+function getMissingColumnMap(sheet) {
+  var map = {
+    barcode:    MC_BARCODE,
+    priceUnit:  MC_PRICE_EA,
+    priceTotal: MC_PRICE_ALL,
+    name:       MC_NAME,
+    qty:        MC_QTY,
+    process:    MC_PROCESS,
+    zone:       MC_ZONE,
+    warehouse:  MC_WAREHOUSE,
+    key:        MC_KEY,
+    category:   MC_CATEGORY,
+    assignee:   MC_ASSIGNEE,
+    result:     MC_RESULT,
+    flag:       MC_FLAG,
+    maxCol:     MC_FLAG + 1
+  };
+
+  if (!sheet || sheet.getLastColumn() < 1) return map;
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  map.maxCol = headers.length;
+
+  for (var c = 0; c < headers.length; c++) {
+    var h = String(headers[c] || '').toLowerCase().trim();
+    if (!h) continue;
+
+    if (h === 'шк' || h === 'штрихкод' || h === 'barcode') map.barcode = c;
+    else if (h.indexOf('цена продажи') !== -1 || h === 'цена товара' || h === 'price_ea') map.priceUnit = c;
+    else if (h.indexOf('цена все') !== -1 || h === 'сумма' || h === 'price_all') map.priceTotal = c;
+    else if (h === 'описание' || h === 'наименование' || h === 'название' || h === 'name') map.name = c;
+    else if (h === 'товаров' || h === 'кол-во' || h === 'количество' || h === 'qty') map.qty = c;
+    else if (h === 'процесс' || h === 'process') map.process = c;
+    else if (h === 'зона' || h === 'zone') map.zone = c;
+    else if (h === 'склад' || h === 'warehouse') map.warehouse = c;
+    else if (h === 'key' || h === 'ячейка') map.key = c;
+    else if (h === 'категория' || h === 'category' || h === 'h1_title' || h === 'h1' || h === 'h1_name') map.category = c;
+    else if (h.indexOf('у кого') !== -1 || h === 'исполнитель' || h === 'assignee') map.assignee = c;
+    else if (h === 'статус' || h === 'результат' || h === 'result') map.result = c;
+    else if (h === 'флажок' || h === 'обработано' || h === 'flag') map.flag = c;
+  }
+
+  return map;
+}
 
 // ── Колонки листа «Сотрудники» (0-based) ───────────────
 var EC_ID      = 0;  // A: ID
@@ -713,18 +760,6 @@ var MONTHS_RU = [
   'Январь','Февраль','Март','Апрель','Май','Июнь',
   'Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'
 ];
-
-// ─────────────────────────────────────────────────────────
-//  Меню «РАО» в Google Sheets (триггер onOpen)
-// ─────────────────────────────────────────────────────────
-function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('РАО')
-    .addItem('Распределить миссинг', 'distributeMissingTasks')
-    .addSeparator()
-    .addItem('Инициализация листов', 'initSheets')
-    .addToUi();
-}
 
 // ─────────────────────────────────────────────────────────
 //  Вспомогательная функция с кэшированием ID ➔ ФИО
@@ -767,38 +802,36 @@ function handleGetMissingTasks(employeeId) {
   var employeeName = getEmployeeNameById(ss, employeeId);
   if (!employeeName) return jsonOk({ success: false, error: 'Сотрудник не найден' });
 
-  // 2. Читаем задачи
   var taskSheet = ss.getSheetByName(SHEET_MISSING);
   if (!taskSheet) return jsonOk({ success: true, tasks: [], razborTasks: [], employeeName: employeeName });
 
   var lastRow = taskSheet.getLastRow();
   if (lastRow < 2) return jsonOk({ success: true, tasks: [], razborTasks: [], employeeName: employeeName });
 
-  var numCols      = MC_FLAG + 1;
-  var data         = taskSheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+  var colMap       = getMissingColumnMap(taskSheet);
+  var data         = taskSheet.getRange(2, 1, lastRow - 1, colMap.maxCol).getValues();
   var empNameLower = employeeName.toLowerCase();
   var tasks        = [];
   var razborTasks  = [];
 
   for (var i = 0; i < data.length; i++) {
-    var assignee  = String(data[i][MC_ASSIGNEE] || '').trim().toLowerCase();
-    var result    = String(data[i][MC_RESULT]   || '').trim();
-    var isFlagged = (data[i][MC_FLAG] === true || String(data[i][MC_FLAG]).toUpperCase() === 'TRUE');
+    var assignee  = String(data[i][colMap.assignee] || '').trim().toLowerCase();
+    var result    = String(data[i][colMap.result]   || '').trim();
+    var isFlagged = (data[i][colMap.flag] === true || String(data[i][colMap.flag]).toUpperCase() === 'TRUE');
 
-    // Назначенные этому сотруднику и ещё не зафиксированные (флажок P пустой)
     if (assignee === empNameLower && !isFlagged) {
       var item = {
-        row:        i + 2,                       // номер строки в таблице (1-based)
-        barcode:    data[i][MC_BARCODE],
-        name:       data[i][MC_NAME],
-        priceUnit:  data[i][MC_PRICE_EA],
-        priceTotal: data[i][MC_PRICE_ALL],
-        qty:        data[i][MC_QTY],
-        process:    data[i][MC_PROCESS],
-        zone:       data[i][MC_ZONE],
-        key:        data[i][MC_KEY],
-        category:   data[i][MC_CATEGORY],
-        result:     result                        // '' или 'На разбор'
+        row:        i + 2,
+        barcode:    data[i][colMap.barcode],
+        name:       data[i][colMap.name],
+        priceUnit:  data[i][colMap.priceUnit],
+        priceTotal: data[i][colMap.priceTotal],
+        qty:        data[i][colMap.qty],
+        process:    data[i][colMap.process],
+        zone:       data[i][colMap.zone],
+        key:        data[i][colMap.key],
+        category:   data[i][colMap.category],
+        result:     result
       };
 
       tasks.push(item);
@@ -808,10 +841,6 @@ function handleGetMissingTasks(employeeId) {
     }
   }
 
-  // ─── Пороговые значения ценовых блоков ───
-  //  Блок 3: Свыше 1 000 000 сум
-  //  Блок 2: От 500 000 до 1 000 000 сум
-  //  Блок 1: До 500 000 сум
   function getPriceTier(price) {
     var p = Number(price) || 0;
     if (p >= 1000000) return 3;
@@ -819,9 +848,6 @@ function handleGetMissingTasks(employeeId) {
     return 1;
   }
 
-  // Сортировка:
-  //  1. По блоку цен (от более дорогого к более дешевому)
-  //  2. Внутри каждого блока — по возрастанию ячейки (key) для оптимального маршрута
   tasks.sort(function(a, b) {
     var tierDiff = getPriceTier(b.priceTotal) - getPriceTier(a.priceTotal);
     if (tierDiff !== 0) return tierDiff;
@@ -846,20 +872,38 @@ function handleLogMissingResult(data) {
   var ss       = SpreadsheetApp.getActiveSpreadsheet();
   var RAZBOR   = 'На разбор';
   var isRazbor = (data.result === RAZBOR);
-
   var resultText = data.result || '';
 
-  // 1. Обновляем статус в «На поиск» (всегда)
-  if (data.row && Number(data.row) > 1) {
-    var taskSheet = ss.getSheetByName(SHEET_MISSING);
-    if (taskSheet) {
-      var rowNum = Number(data.row);
-      taskSheet.getRange(rowNum, MC_RESULT + 1).setValue(resultText);
+  var taskSheet = ss.getSheetByName(SHEET_MISSING);
+  var colMap    = getMissingColumnMap(taskSheet);
 
-      if (!isRazbor) {
-        // Финальный результат → ставим флажок ✅ в колонке P
-        taskSheet.getRange(rowNum, MC_FLAG + 1).setValue(true);
-      }
+  var catVal     = String(data.category || '').trim();
+  var procVal    = String(data.process  || '').trim();
+  var zoneVal    = String(data.zone     || '').trim();
+  var nameVal    = String(data.name     || '').trim();
+  var barcodeVal = String(data.barcode  || '').trim();
+  var keyVal     = String(data.key      || '').trim();
+
+  // 1. Обновляем статус в «На поиск» и считываем отсутствующие данные из строки источника
+  if (data.row && Number(data.row) > 1 && taskSheet) {
+    var rowNum = Number(data.row);
+    taskSheet.getRange(rowNum, colMap.result + 1).setValue(resultText);
+
+    if (!isRazbor) {
+      taskSheet.getRange(rowNum, colMap.flag + 1).setValue(true);
+    }
+
+    // Если данные (категория/процесс/зона и др.) не переданы с фронтенда, считываем их напрямую из исходной строки
+    if (!catVal || !procVal || !zoneVal || !nameVal || !barcodeVal || !keyVal) {
+      try {
+        var rowValues = taskSheet.getRange(rowNum, 1, 1, colMap.maxCol).getValues()[0];
+        if (!catVal     && rowValues[colMap.category] !== undefined) catVal     = String(rowValues[colMap.category] || '').trim();
+        if (!procVal    && rowValues[colMap.process]  !== undefined) procVal    = String(rowValues[colMap.process]  || '').trim();
+        if (!zoneVal    && rowValues[colMap.zone]     !== undefined) zoneVal    = String(rowValues[colMap.zone]     || '').trim();
+        if (!nameVal    && rowValues[colMap.name]     !== undefined) nameVal    = String(rowValues[colMap.name]     || '').trim();
+        if (!barcodeVal && rowValues[colMap.barcode]  !== undefined) barcodeVal = String(rowValues[colMap.barcode]  || '').trim();
+        if (!keyVal     && rowValues[colMap.key]      !== undefined) keyVal     = String(rowValues[colMap.key]      || '').trim();
+      } catch(eRow) {}
     }
   }
 
@@ -877,13 +921,13 @@ function handleLogMissingResult(data) {
       new Date(),                           // A: Дата/Время
       data.employeeId   || '',              // B: ID
       data.employeeName || '',              // C: ФИО
-      data.barcode      || '',              // D: ШК
-      data.name         || '',              // E: Описание
-      data.zone         || '',              // F: Зона
-      data.category     || '',              // G: Категория
-      data.process      || '',              // H: Процесс
-      data.key          || '',              // I: Ячейка (исходная)
-      data.foundKey     || data.key || '',  // J: Где нашли
+      barcodeVal,                           // D: ШК
+      nameVal,                              // E: Описание
+      zoneVal,                              // F: Зона
+      catVal,                               // G: Категория
+      procVal,                              // H: Процесс
+      keyVal,                               // I: Ячейка (исходная)
+      data.foundKey     || keyVal || '',    // J: Где нашли
       resultText,                           // K: Результат
       taskQty,                              // L: Количество (по заданию)
       priceUnit,                            // M: Цена товара (1 шт)
@@ -905,7 +949,6 @@ function handleGetRazborTasks(employeeId) {
 
   var ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  // Определяем ФИО
   var empSheet = ss.getSheetByName(SHEET_EMPLOYEES);
   if (!empSheet) return jsonOk({ success: true, tasks: [] });
 
@@ -928,26 +971,27 @@ function handleGetRazborTasks(employeeId) {
   var lastRow = taskSheet.getLastRow();
   if (lastRow < 2) return jsonOk({ success: true, tasks: [] });
 
-  var data         = taskSheet.getRange(2, 1, lastRow - 1, MC_RESULT + 1).getValues();
+  var colMap       = getMissingColumnMap(taskSheet);
+  var data         = taskSheet.getRange(2, 1, lastRow - 1, colMap.maxCol).getValues();
   var empNameLower = employeeName.toLowerCase();
   var tasks        = [];
 
   for (var i = 0; i < data.length; i++) {
-    var assignee = String(data[i][MC_ASSIGNEE] || '').trim().toLowerCase();
-    var result   = String(data[i][MC_RESULT]   || '').trim();
+    var assignee = String(data[i][colMap.assignee] || '').trim().toLowerCase();
+    var result   = String(data[i][colMap.result]   || '').trim();
 
     if (assignee === empNameLower && result === 'На разбор') {
       tasks.push({
         row:        i + 2,
-        barcode:    data[i][MC_BARCODE],
-        name:       data[i][MC_NAME],
-        priceUnit:  data[i][MC_PRICE_EA],
-        priceTotal: data[i][MC_PRICE_ALL],
-        qty:        data[i][MC_QTY],
-        process:    data[i][MC_PROCESS],
-        zone:       data[i][MC_ZONE],
-        key:        data[i][MC_KEY],
-        category:   data[i][MC_CATEGORY]
+        barcode:    data[i][colMap.barcode],
+        name:       data[i][colMap.name],
+        priceUnit:  data[i][colMap.priceUnit],
+        priceTotal: data[i][colMap.priceTotal],
+        qty:        data[i][colMap.qty],
+        process:    data[i][colMap.process],
+        zone:       data[i][colMap.zone],
+        key:        data[i][colMap.key],
+        category:   data[i][colMap.category]
       });
     }
   }
