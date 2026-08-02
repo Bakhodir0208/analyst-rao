@@ -1077,27 +1077,25 @@ function distributeMissingTasks() {
   var lastRow = taskSheet.getLastRow();
   if (lastRow < 2) { ui.alert('Лист «' + SHEET_MISSING + '» пуст.'); return; }
 
-  var numCols = MC_FLAG + 1; // 16 колонок
-  var allData = taskSheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+  var colMap  = getMissingColumnMap(taskSheet);
+  var allData = taskSheet.getRange(2, 1, lastRow - 1, colMap.maxCol).getValues();
 
   var itemsToDistribute     = [];
   var alreadyCompletedCount = 0;
 
   for (var i = 0; i < allData.length; i++) {
-    var flag   = allData[i][MC_FLAG];                           // Col P: TRUE если обработано
-    var result = String(allData[i][MC_RESULT] || '').trim();     // Col O: Результат
+    var flag   = allData[i][colMap.flag];
+    var result = String(allData[i][colMap.result] || '').trim();
 
     var isFlagTrue = (flag === true) || (String(flag).toUpperCase() === 'TRUE');
     var isFinished = isFlagTrue || (result !== '' && result !== 'На разбор');
 
     if (isFinished) {
-      // Завершённые позиции НЕ трогаем!
       alreadyCompletedCount++;
     } else {
-      // Незавершённые задачи отзываем и отправляем на перераспределение
       itemsToDistribute.push({
         dataIdx:    i,
-        priceTotal: parseFloat(allData[i][MC_PRICE_ALL]) || 0
+        priceTotal: parseFloat(allData[i][colMap.priceTotal]) || 0
       });
     }
   }
@@ -1120,12 +1118,23 @@ function distributeMissingTasks() {
     minEmp.totalSum += itemsToDistribute[i].priceTotal;
   }
 
-  // 5. Пакетная запись в колонку N («У кого задана»)
-  var assigneeCol = taskSheet.getRange(2, MC_ASSIGNEE + 1, lastRow - 1, 1).getValues();
-  for (var i = 0; i < itemsToDistribute.length; i++) {
-    assigneeCol[itemsToDistribute[i].dataIdx][0] = itemsToDistribute[i].assignedTo;
+  // 5. Пакетная запись в колонку назначения с зафиксированной выгрузкой в таблицу
+  try {
+    var assigneeCol = taskSheet.getRange(2, colMap.assignee + 1, lastRow - 1, 1).getValues();
+    for (var i = 0; i < itemsToDistribute.length; i++) {
+      assigneeCol[itemsToDistribute[i].dataIdx][0] = itemsToDistribute[i].assignedTo;
+    }
+    taskSheet.getRange(2, colMap.assignee + 1, lastRow - 1, 1).setValues(assigneeCol);
+    SpreadsheetApp.flush(); // Гарантированная запись изменений на диск таблицы
+  } catch (errWrite) {
+    ui.alert(
+      '❌ Ошибка записи распределения!\n\n' +
+      'У вас нет прав на редактирование защищенных диапазонов на листе «' + SHEET_MISSING + '».\n' +
+      'Попросите владельца таблицы разрешить редактирование колонки распределения или снять защиту.\n\n' +
+      'Детали: ' + errWrite.message
+    );
+    return;
   }
-  taskSheet.getRange(2, MC_ASSIGNEE + 1, lastRow - 1, 1).setValues(assigneeCol);
 
   // 6. Итоговый отчёт
   var summary = onShift.map(function(e) {
