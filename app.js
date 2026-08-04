@@ -890,8 +890,16 @@ function renderTaskList() {
     if (isCurrent) cls.push('is-current');
     if (isRaz)     cls.push('is-razbor');
 
-    const cleanZone = String(task.zone || '').replace(/\s*\([^)]*сектор[^)]*\)/gi, '').trim();
-    const qtyStr    = (task.qty > 0) ? ` · ${task.qty} шт.` : '';
+    const procStr = String(task.process || '').trim();
+    const keyStr  = String(task.key || '').trim();
+    const qtyStr  = (task.qty > 0) ? `${task.qty} шт.` : '';
+
+    const metaParts = [];
+    if (keyStr)  metaParts.push(keyStr);
+    if (procStr) metaParts.push(procStr);
+    if (qtyStr)  metaParts.push(qtyStr);
+
+    const metaText = metaParts.join(' · ');
 
     const item = document.createElement('div');
     item.className = cls.join(' ');
@@ -899,7 +907,7 @@ function renderTaskList() {
       <span class="tli-status">${statusIcon}</span>
       <div class="tli-info">
         <div class="tli-name">${task.name || '—'}</div>
-        <div class="tli-meta">${task.key || ''} · ${cleanZone}${qtyStr}</div>
+        <div class="tli-meta">${metaText}</div>
       </div>
       <span class="tli-price">${formatSum(task.priceTotal)}</span>`;
 
