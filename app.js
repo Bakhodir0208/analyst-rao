@@ -646,7 +646,7 @@ async function submitMissingResult(result, foundQty, foundKey, targetTask) {
   }
 
   // Показываем мгновенное пуш-уведомление
-  showSuccess('Запись сохранена! ✅');
+  showSuccess(result === 'Пропущено' ? 'Задача пропущена ⏭' : 'Запись сохранена! ✅');
 
   // Обновляем отображение UI карточки и списка
   if (state.missing.tasks.length === 0) {
@@ -747,8 +747,8 @@ function showConfirmation(result, isRazborFinal, razborTask) {
 
   const titleEl = document.getElementById('confirmTitleText');
   if (titleEl) {
-    if (result === 'Пропустить') {
-      titleEl.textContent = 'Пропустить эту задачу без записи?';
+    if (result === 'Пропустить' || result === 'Пропущено') {
+      titleEl.textContent = 'Пропустить эту задачу?';
     } else {
       titleEl.textContent = isFound
         ? 'Подтвердите данные найденного товара:'
@@ -764,7 +764,8 @@ function showConfirmation(result, isRazborFinal, razborTask) {
       'Найдено + ошибка':    '✅⚠ Найдено + ошибка',
       'Не найдено + ошибка': '❌⚠ Не найдено + ошибка',
       'На разбор':           '🔎 На разбор',
-      'Пропустить':          '⏭ Пропустить',
+      'Пропустить':          '⏭ Пропущено',
+      'Пропущено':          '⏭ Пропущено',
     };
     labelEl.textContent = emoji[result] || result;
   }
@@ -812,42 +813,14 @@ function highlightInvalidInput(el) {
   }, 2200);
 }
 
-function skipCurrentMissingTask() {
-  const tasks = state.missing.tasks;
-  if (!tasks || tasks.length === 0) return;
-
-  const currentTask = tasks[state.missing.currentIndex];
-  if (!currentTask) return;
-
-  // Пропускаем текущую задачу локально (без записи в Google Таблицу)
-  state.missing.tasks = tasks.filter((_, idx) => idx !== state.missing.currentIndex);
-
-  if (state.missing.currentIndex >= state.missing.tasks.length) {
-    state.missing.currentIndex = Math.max(0, state.missing.tasks.length - 1);
-  }
-
-  showSuccess('Задача пропущена ⏭');
-
-  if (state.missing.tasks.length === 0) {
-    setMissingState('empty');
-  } else {
-    renderMissingTask();
-    renderTaskList();
-  }
-}
-
 async function confirmAndSubmit() {
   const result   = state.missing.pendingResult;
   const isRazbor = state.missing.pendingIsRazbor;
   const rtask    = state.missing.pendingRazborTask;
 
-  if (result === 'Пропустить') {
-    hideConfirmation();
-    skipCurrentMissingTask();
-    return;
-  }
+  const finalResult = (result === 'Пропустить') ? 'Пропущено' : result;
 
-  const isFound  = (result === 'Найдено' || result === 'Найдено + ошибка');
+  const isFound  = (finalResult === 'Найдено' || finalResult === 'Найдено + ошибка');
   let foundQty = null;
   let foundKey = null;
 
@@ -878,12 +851,12 @@ async function confirmAndSubmit() {
 
   hideConfirmation();
 
-  if (!result) return;
+  if (!finalResult) return;
 
   if (isRazbor && rtask) {
-    await submitRazborFinalResult(result, rtask, foundQty, foundKey);
+    await submitRazborFinalResult(finalResult, rtask, foundQty, foundKey);
   } else {
-    await submitMissingResult(result, foundQty, foundKey);
+    await submitMissingResult(finalResult, foundQty, foundKey);
   }
 }
 
