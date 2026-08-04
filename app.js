@@ -218,18 +218,28 @@ function updatePlanDisplay() {
     text.textContent = '—';
     fill.setAttribute('stroke-dasharray', '0 100');
     fill.style.stroke = 'rgba(255,255,255,0.15)';
+    text.style.color = '';
     return;
   }
 
   const val = Math.min(100, Math.max(0, Math.round(pct)));
-  text.textContent = val + '%';
+  text.textContent = (Math.round(pct * 100) / 100) + '%';
   fill.setAttribute('stroke-dasharray', val + ' ' + (100 - val));
 
-  // Цвет по уровню выполнения
-  if      (val >= 90) fill.style.stroke = '#10b981'; // зелёный
-  else if (val >= 70) fill.style.stroke = '#6366f1'; // фиолет
-  else if (val >= 50) fill.style.stroke = '#f59e0b'; // жёлтый
-  else                fill.style.stroke = '#f43f5e'; // красный
+  // Цвет по уровню выполнения:
+  // До 50% — красный (#f43f5e)
+  // От 50% до 99.99% — жёлтый (#f59e0b)
+  // Начиная от 100% — зелёный (#10b981)
+  if (pct >= 100) {
+    fill.style.stroke = '#10b981';
+    text.style.color = '#10b981';
+  } else if (pct >= 50) {
+    fill.style.stroke = '#f59e0b';
+    text.style.color = '#f59e0b';
+  } else {
+    fill.style.stroke = '#f43f5e';
+    text.style.color = '#f43f5e';
+  }
 }
 
 // ═══════════════════════════════════════════

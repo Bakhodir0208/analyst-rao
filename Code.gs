@@ -579,6 +579,46 @@ function getOrCreateSummarySheet(ss, monthName) {
 }
 
 /**
+ * Условное форматирование сводной таблицы
+ * - до 50% — красное
+ * - от 50% до 99.99% — жёлтое
+ * - начиная от 100% — зелёное
+ */
+function applySummaryConditionalFormatting(sheet) {
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 2 || lastCol < 2) return;
+
+  var range = sheet.getRange(2, 2, lastRow - 1, lastCol - 1);
+
+  // Правило 1: Зелёное (>= 100%)
+  var ruleGreen = SpreadsheetApp.newConditionalFormatRule()
+    .whenNumberGreaterThanOrEqualTo(1)
+    .setBackground('#e6f4ea')
+    .setFontColor('#137333')
+    .setRanges([range])
+    .build();
+
+  // Правило 2: Жёлтое (от 50% до 99.99%)
+  var ruleYellow = SpreadsheetApp.newConditionalFormatRule()
+    .whenNumberBetween(0.5, 0.999999)
+    .setBackground('#fef7e0')
+    .setFontColor('#b06000')
+    .setRanges([range])
+    .build();
+
+  // Правило 3: Красное (до 50%)
+  var ruleRed = SpreadsheetApp.newConditionalFormatRule()
+    .whenNumberLessThan(0.5)
+    .setBackground('#fce8e6')
+    .setFontColor('#c5221f')
+    .setRanges([range])
+    .build();
+
+  sheet.setConditionalFormatRules([ruleGreen, ruleYellow, ruleRed]);
+}
+
+/**
  * Пересчёт и обновление всех сводных листов «Сводная - [Месяц]»
  */
 function updateSummarySheet(ss) {
@@ -619,27 +659,80 @@ function updateSummarySheet(ss) {
     getOrCreateSummarySheet(ss, monthName);
 
     var lastCol = summarySheet.getLastColumn();
-    if (lastCol < 2) continue;
+    var lastRow = summarySheet.getLastRow();
+    if (lastCol < 2 || lastRow < 2) continue;
 
     var dateHeaders = summarySheet.getRange(1, 2, 1, lastCol - 1).getValues()[0];
-    var empDataRows = summarySheet.getRange(2, 1, Math.max(1, summarySheet.getLastRow() - 1), lastCol).getValues();
+    var empDataRows = summarySheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
 
-    for (var r = 0; r < empDataRows.length; r++) {
+    var numRows = empDataRows.length;
+    var numCols = dateHeaders.length;
+    if (numRows === 0 || numCols === 0) continue;
+
+    var outputValues = [];
+    var outputBgColors = [];
+    var outputFontColors = [];
+    var outputFormats = [];
+
+    for (var r = 0; r < numRows; r++) {
+      var rowVals = [];
+      var rowBgs = [];
+      var rowFonts = [];
+      var rowFormats = [];
       var empName = String(empDataRows[r][0] || '').trim();
-      if (!empName) continue;
 
-      for (var c = 0; c < dateHeaders.length; c++) {
+      for (var c = 0; c < numCols; c++) {
         var dVal = dateHeaders[c];
-        if (!dVal) continue;
+        if (!empName || !dVal) {
+          rowVals.push('');
+          rowBgs.push('#ffffff');
+          rowFonts.push('#000000');
+          rowFormats.push('@');
+          continue;
+        }
 
         var dateStr = parseToDateStr(dVal, tz);
         var calcPercent = calculateEmployeeDailyPercent(empName, dateStr, logRows, extraWorkRows);
 
-        summarySheet.getRange(r + 2, c + 2).setValue(calcPercent > 0 ? calcPercent + '%' : '');
+        if (calcPercent > 0) {
+          var val = calcPercent / 100;
+          rowVals.push(val);
+          rowFormats.push('0.00%');
+
+          if (calcPercent >= 100) {
+            rowBgs.push('#e6f4ea');   // Мягкий зелёный
+            rowFonts.push('#137333'); // Тёмно-зелёный текст
+          } else if (calcPercent >= 50) {
+            rowBgs.push('#fef7e0');   // Мягкий жёлтый
+            rowFonts.push('#b06000'); // Тёмно-жёлтый текст
+          } else {
+            rowBgs.push('#fce8e6');   // Мягкий красный
+            rowFonts.push('#c5221f'); // Тёмно-красный текст
+          }
+        } else {
+          rowVals.push('');
+          rowBgs.push('#ffffff');
+          rowFonts.push('#000000');
+          rowFormats.push('@');
+        }
       }
+
+      outputValues.push(rowVals);
+      outputBgColors.push(rowBgs);
+      outputFontColors.push(rowFonts);
+      outputFormats.push(rowFormats);
     }
+
+    var targetRange = summarySheet.getRange(2, 2, numRows, numCols);
+    targetRange.setValues(outputValues)
+               .setNumberFormats(outputFormats)
+               .setBackgrounds(outputBgColors)
+               .setFontColors(outputFontColors);
+
+    applySummaryConditionalFormatting(summarySheet);
   }
 }
+
 
 // ─────────────────────────────────────────────────────────
 //  Меню «РАО» в Google Sheets (триггер onOpen)
