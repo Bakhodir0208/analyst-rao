@@ -297,10 +297,6 @@
                 </button>
               </div>
               <div class="info-row">
-                <span class="info-key">Зона</span>
-                <span class="info-val" id="missing-zone">—</span>
-              </div>
-              <div class="info-row">
                 <span class="info-key">Процесс</span>
                 <span class="info-val" id="missing-process">—</span>
               </div>
@@ -336,6 +332,11 @@
           <!-- Кнопка «На разбор» — полная ширина -->
           <button class="result-btn btn-razbor" id="rbRazbor" data-result="На разбор">
             🔎 На разбор — отложить для анализа
+          </button>
+
+          <!-- Кнопка «Пропустить» — полная ширина -->
+          <button class="result-btn btn-skip" id="rbSkip" data-result="Пропустить">
+            ⏭ Пропустить — перейти к следующей
           </button>
 
         </div><!-- /missing-card-view -->
@@ -395,7 +396,6 @@
                 </div>
               </div>
               <div class="info-row"><span class="info-key">Ячейка</span><span class="info-val monospace" id="razbor-key">—</span></div>
-              <div class="info-row"><span class="info-key">Зона</span><span class="info-val" id="razbor-zone">—</span></div>
               <div class="info-row"><span class="info-key">Процесс</span><span class="info-val" id="razbor-process">—</span></div>
               <div class="info-row"><span class="info-key">Категория</span><span class="info-val" id="razbor-category">—</span></div>
               <div class="info-row"><span class="info-key">Кол-во</span><span class="info-val" id="razbor-qty">—</span></div>

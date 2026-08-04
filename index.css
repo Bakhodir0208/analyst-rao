@@ -914,6 +914,21 @@ body {
   box-shadow: 0 4px 16px rgba(245,158,11,0.15);
 }
 
+/* ── "Пропустить" button ── */
+.btn-skip {
+  width: 100%;
+  margin-top: 8px;
+  background: rgba(99,102,241,0.08);
+  border-color: rgba(99,102,241,0.3);
+  color: #818cf8;
+  font-size: 0.83rem;
+}
+.btn-skip:hover:not(:disabled) {
+  background: rgba(99,102,241,0.16);
+  border-color: rgba(99,102,241,0.5);
+  box-shadow: 0 4px 16px rgba(99,102,241,0.15);
+}
+
 /* ── List toggle button ── */
 .btn-list-toggle {
   display: flex;

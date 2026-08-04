@@ -534,11 +534,16 @@ function renderMissingTask() {
       : (task.name || '—');
   }
 
-  document.getElementById('missing-zone').textContent     = task.zone     || '—';
-  document.getElementById('missing-process').textContent  = task.process  || '—';
-  document.getElementById('missing-category').textContent = task.category || '—';
-  document.getElementById('missing-qty').textContent      = (task.qty || 0) + ' шт.';
-  document.getElementById('missing-price').textContent    = formatSum(task.priceTotal);
+  const zoneEl = document.getElementById('missing-zone');
+  if (zoneEl) zoneEl.textContent = task.zone || '—';
+  const procEl = document.getElementById('missing-process');
+  if (procEl) procEl.textContent = task.process || '—';
+  const catEl = document.getElementById('missing-category');
+  if (catEl) catEl.textContent = task.category || '—';
+  const qtyEl = document.getElementById('missing-qty');
+  if (qtyEl) qtyEl.textContent = (task.qty || 0) + ' шт.';
+  const priceEl = document.getElementById('missing-price');
+  if (priceEl) priceEl.textContent = formatSum(task.priceTotal);
 }
 
 /**
@@ -742,9 +747,13 @@ function showConfirmation(result, isRazborFinal, razborTask) {
 
   const titleEl = document.getElementById('confirmTitleText');
   if (titleEl) {
-    titleEl.textContent = isFound
-      ? 'Подтвердите данные найденного товара:'
-      : 'Вы уверены, что хотите отметить товар?';
+    if (result === 'Пропустить') {
+      titleEl.textContent = 'Пропустить эту задачу без записи?';
+    } else {
+      titleEl.textContent = isFound
+        ? 'Подтвердите данные найденного товара:'
+        : 'Вы уверены, что хотите отметить товар?';
+    }
   }
 
   const labelEl = document.getElementById('confirmResultLabel');
@@ -755,6 +764,7 @@ function showConfirmation(result, isRazborFinal, razborTask) {
       'Найдено + ошибка':    '✅⚠ Найдено + ошибка',
       'Не найдено + ошибка': '❌⚠ Не найдено + ошибка',
       'На разбор':           '🔎 На разбор',
+      'Пропустить':          '⏭ Пропустить',
     };
     labelEl.textContent = emoji[result] || result;
   }
@@ -802,10 +812,40 @@ function highlightInvalidInput(el) {
   }, 2200);
 }
 
+function skipCurrentMissingTask() {
+  const tasks = state.missing.tasks;
+  if (!tasks || tasks.length === 0) return;
+
+  const currentTask = tasks[state.missing.currentIndex];
+  if (!currentTask) return;
+
+  // Пропускаем текущую задачу локально (без записи в Google Таблицу)
+  state.missing.tasks = tasks.filter((_, idx) => idx !== state.missing.currentIndex);
+
+  if (state.missing.currentIndex >= state.missing.tasks.length) {
+    state.missing.currentIndex = Math.max(0, state.missing.tasks.length - 1);
+  }
+
+  showSuccess('Задача пропущена ⏭');
+
+  if (state.missing.tasks.length === 0) {
+    setMissingState('empty');
+  } else {
+    renderMissingTask();
+    renderTaskList();
+  }
+}
+
 async function confirmAndSubmit() {
   const result   = state.missing.pendingResult;
   const isRazbor = state.missing.pendingIsRazbor;
   const rtask    = state.missing.pendingRazborTask;
+
+  if (result === 'Пропустить') {
+    hideConfirmation();
+    skipCurrentMissingTask();
+    return;
+  }
 
   const isFound  = (result === 'Найдено' || result === 'Найдено + ошибка');
   let foundQty = null;
@@ -946,7 +986,8 @@ function openRazborItem(task) {
   document.getElementById('razbor-name').textContent         = task.name         || '—';
   document.getElementById('razbor-barcode-text').textContent = barcode           || '—';
   document.getElementById('razbor-key').textContent          = task.key          || '—';
-  document.getElementById('razbor-zone').textContent         = task.zone         || '—';
+  const rZoneEl = document.getElementById('razbor-zone');
+  if (rZoneEl) rZoneEl.textContent = task.zone || '—';
   document.getElementById('razbor-process').textContent      = task.process      || '—';
   document.getElementById('razbor-category').textContent     = task.category     || '—';
   document.getElementById('razbor-qty').textContent          = (task.qty || 0)   + ' шт.';
@@ -1012,6 +1053,10 @@ async function submitRazborFinalResult(result, task, foundQty, foundKey) {
   // Кнопка «На разбор»
   const rbRazbor = document.getElementById('rbRazbor');
   if (rbRazbor) rbRazbor.onclick = () => showConfirmation('На разбор', false, null);
+
+  // Кнопка «Пропустить»
+  const rbSkip = document.getElementById('rbSkip');
+  if (rbSkip) rbSkip.onclick = () => showConfirmation('Пропустить', false, null);
 
   // Предотвращение случайной отправки по Enter от сканера штрихкодов
   const foundKeyInput = document.getElementById('confirmFoundKeyInput');
