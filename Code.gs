@@ -49,10 +49,6 @@ function doGet(e) {
       return handleGetRazborTasks(e.parameter.id);
     }
 
-    if (action === 'distributeMissingTasks') {
-      return handleApiDistributeMissingTasks();
-    }
-
     return jsonOk({ success: false, error: 'Неизвестный action: ' + action });
   } catch (err) {
     return jsonOk({ success: false, error: err.toString() });
@@ -1243,95 +1239,6 @@ function distributeMissingTasks() {
     'между ' + onShift.length + ' сотрудниками на смене:\n\n' + summary +
     '\n\n(Завершённые позиции не затрагивались: ' + alreadyCompletedCount + ' шт.)'
   );
-}
-
-/**
- * Вызов распределения задач через API (работает от имени владельца скрипта)
- */
-function handleApiDistributeMissingTasks() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  var empSheet = ss.getSheetByName(SHEET_EMPLOYEES);
-  if (!empSheet) return jsonOk({ success: false, error: 'Лист «' + SHEET_EMPLOYEES + '» не найден!' });
-
-  var empLastRow = empSheet.getLastRow();
-  if (empLastRow < 2) return jsonOk({ success: false, error: 'Список сотрудников пуст.' });
-
-  var empData  = empSheet.getRange(2, 1, empLastRow - 1, EC_MISSING + 1).getValues();
-  var onShift  = [];
-  for (var i = 0; i < empData.length; i++) {
-    if (empData[i][EC_MISSING] === true || String(empData[i][EC_MISSING]).toUpperCase() === 'TRUE') {
-      onShift.push({ name: String(empData[i][EC_NAME]).trim(), totalSum: 0 });
-    }
-  }
-
-  if (onShift.length === 0) {
-    return jsonOk({ success: false, error: 'Никто не отмечен на смене в листе «Сотрудники»!' });
-  }
-
-  var taskSheet = ss.getSheetByName(SHEET_MISSING);
-  if (!taskSheet) return jsonOk({ success: false, error: 'Лист «' + SHEET_MISSING + '» не найден!' });
-
-  var lastRow = taskSheet.getLastRow();
-  if (lastRow < 2) return jsonOk({ success: false, error: 'Лист «' + SHEET_MISSING + '» пуст.' });
-
-  var colMap  = getMissingColumnMap(taskSheet);
-  var allData = taskSheet.getRange(2, 1, lastRow - 1, colMap.maxCol).getValues();
-
-  var itemsToDistribute     = [];
-  var alreadyCompletedCount = 0;
-
-  for (var i = 0; i < allData.length; i++) {
-    var flag   = allData[i][colMap.flag];
-    var result = String(allData[i][colMap.result] || '').trim();
-
-    var isFlagTrue = (flag === true) || (String(flag).toUpperCase() === 'TRUE');
-    var isFinished = isFlagTrue || (result !== '' && result !== 'На разбор');
-
-    if (isFinished) {
-      alreadyCompletedCount++;
-    } else {
-      itemsToDistribute.push({
-        dataIdx:    i,
-        priceTotal: parseFloat(allData[i][colMap.priceTotal]) || 0
-      });
-    }
-  }
-
-  if (itemsToDistribute.length === 0) {
-    return jsonOk({ success: false, error: 'Все задачи уже выполнены!' });
-  }
-
-  itemsToDistribute.sort(function(a, b) { return b.priceTotal - a.priceTotal; });
-
-  for (var i = 0; i < itemsToDistribute.length; i++) {
-    var minEmp = onShift[0];
-    for (var j = 1; j < onShift.length; j++) {
-      if (onShift[j].totalSum < minEmp.totalSum) minEmp = onShift[j];
-    }
-    itemsToDistribute[i].assignedTo = minEmp.name;
-    minEmp.totalSum += itemsToDistribute[i].priceTotal;
-  }
-
-  try {
-    var assigneeCol = taskSheet.getRange(2, colMap.assignee + 1, lastRow - 1, 1).getValues();
-    for (var i = 0; i < itemsToDistribute.length; i++) {
-      assigneeCol[itemsToDistribute[i].dataIdx][0] = itemsToDistribute[i].assignedTo;
-    }
-    taskSheet.getRange(2, colMap.assignee + 1, lastRow - 1, 1).setValues(assigneeCol);
-    SpreadsheetApp.flush();
-  } catch (errWrite) {
-    return jsonOk({ success: false, error: 'Ошибка записи: ' + errWrite.message });
-  }
-
-  return jsonOk({
-    success: true,
-    count: itemsToDistribute.length,
-    onShiftCount: onShift.length,
-    summary: onShift.map(function(e) {
-      return '• ' + e.name + ': ' + Math.round(e.totalSum).toLocaleString() + ' сум';
-    }).join('\n')
-  });
 }
 
 // ─────────────────────────────────────────────────────────
