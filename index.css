@@ -1327,6 +1327,10 @@ body {
   max-width: 440px;
   margin: 0 auto;
   width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .bezshk-card {
@@ -1335,6 +1339,25 @@ body {
   border-radius: var(--r-card);
   padding: 20px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.bezshk-card .form-group {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.bezshk-card .form-label {
+  text-align: center;
+  width: 100%;
 }
 
 .bezshk-input {
@@ -1343,12 +1366,14 @@ body {
   font-size: 1.05rem !important;
   font-weight: 700 !important;
   padding: 0 14px !important;
+  text-align: center;
   color: var(--text) !important;
   background: rgba(0, 0, 0, 0.3) !important;
   border: 1px solid rgba(129, 140, 248, 0.35) !important;
   border-radius: 12px !important;
   outline: none;
   transition: all 0.18s ease;
+  box-sizing: border-box;
 }
 
 .bezshk-input:focus {
@@ -1360,6 +1385,11 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  justify-content: center;
+  align-items: center;
+  justify-items: stretch;
 }
 
 .btn-bezshk-action {
@@ -1367,15 +1397,18 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  text-align: center;
   gap: 6px;
-  padding: 0 12px;
-  font-size: 0.9rem;
+  padding: 0 8px;
+  font-size: 0.85rem;
   font-weight: 800;
   border-radius: 12px;
   border: none;
   cursor: pointer;
   transition: all 0.18s ease;
   font-family: var(--font);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .btn-shortage {
