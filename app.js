@@ -743,7 +743,7 @@ function showConfirmation(result, isRazborFinal, razborTask) {
   const currentTask = isRazborFinal ? razborTask : state.missing.tasks[state.missing.currentIndex];
   const maxQty = (currentTask && currentTask.qty) ? parseInt(currentTask.qty) || 1 : 1;
   const targetKey = (currentTask && currentTask.key) ? String(currentTask.key) : '';
-  const isFound = (result === 'Найдено' || result === 'Найдено + ошибка' || result === 'Перезапись / Товар найден');
+  const isFound = (result === 'Найдено' || result === 'Найдено + ошибка');
 
   const titleEl = document.getElementById('confirmTitleText');
   if (titleEl) {
@@ -815,7 +815,7 @@ async function confirmAndSubmit() {
 
   const finalResult = result;
 
-  const isFound  = (finalResult === 'Найдено' || finalResult === 'Найдено + ошибка' || finalResult === 'Перезапись / Товар найден');
+  const isFound  = (finalResult === 'Найдено' || finalResult === 'Найдено + ошибка');
   let foundQty = null;
   let foundKey = null;
 
