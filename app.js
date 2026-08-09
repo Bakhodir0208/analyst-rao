@@ -1380,10 +1380,17 @@ function renderBpSubscreen(subscreenId) {
   });
 }
 
+function isEmployeeMatchJS(a, b) {
+  const strA = String(a || '').trim().toLowerCase();
+  const strB = String(b || '').trim().toLowerCase();
+  if (!strA || !strB) return false;
+  return strA === strB || strA.indexOf(strB) !== -1 || strB.indexOf(strA) !== -1;
+}
+
 function updateBpWarehouseTabs() {
   const fulfillmentTasks = state.bp.tasks.filter(t => t.warehouse === 'Фулфилмент');
   const sergeliTasks     = state.bp.tasks.filter(t => t.warehouse === 'Сергели');
-  const personalTasks    = state.bp.tasks.filter(t => t.assignedTo && (t.assignedTo === state.employeeName || t.assignedTo.indexOf(state.employeeName) !== -1));
+  const personalTasks    = state.bp.tasks.filter(t => isEmployeeMatchJS(t.assignedTo, state.employeeName));
 
   const tabFulfillment = document.getElementById('bpTabFulfillment');
   const tabSergeli     = document.getElementById('bpTabSergeli');
@@ -1406,7 +1413,7 @@ function renderBpFloorGrid() {
 
   let whTasks = [];
   if (state.bp.warehouse === 'Назначено мне') {
-    whTasks = state.bp.tasks.filter(t => t.assignedTo && (t.assignedTo === state.employeeName || t.assignedTo.indexOf(state.employeeName) !== -1));
+    whTasks = state.bp.tasks.filter(t => isEmployeeMatchJS(t.assignedTo, state.employeeName));
   } else {
     whTasks = state.bp.tasks.filter(t => t.warehouse === state.bp.warehouse);
   }
@@ -1438,7 +1445,7 @@ function renderBpFloorGrid() {
     btn.type = 'button';
 
     if (lock) {
-      if (lock.employee === state.employeeName) {
+      if (isEmployeeMatchJS(lock.employee, state.employeeName)) {
         btn.classList.add('active');
         btn.innerHTML = `
           <div class="opt-val">${floor}</div>
@@ -1459,7 +1466,7 @@ function renderBpFloorGrid() {
       `;
     }
 
-    if (!lock || lock.employee === state.employeeName) {
+    if (!lock || isEmployeeMatchJS(lock.employee, state.employeeName)) {
       btn.onclick = () => {
         document.querySelectorAll('#bpFloorSelectGrid .grid-option-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
@@ -1530,7 +1537,7 @@ async function startBpSearch() {
     // Фильтруем задачи выбранного этажа
     let whTasks = [];
     if (state.bp.warehouse === 'Назначено мне') {
-      whTasks = state.bp.tasks.filter(t => t.assignedTo && (t.assignedTo === state.employeeName || t.assignedTo.indexOf(state.employeeName) !== -1));
+      whTasks = state.bp.tasks.filter(t => isEmployeeMatchJS(t.assignedTo, state.employeeName));
     } else {
       whTasks = state.bp.tasks.filter(t => t.warehouse === state.bp.warehouse);
     }
