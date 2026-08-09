@@ -1536,6 +1536,28 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-height: 215px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.bezshk-history-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.bezshk-history-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.bezshk-history-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.bezshk-history-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.4);
 }
 
 .bezshk-history-empty {
