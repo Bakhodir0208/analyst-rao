@@ -424,7 +424,7 @@ function calculateEmployeeDailyPercent(employeeName, targetDateStr, logRows, ext
         barcode = String(row[3] || '').trim();
       }
 
-      if (res === 'Найдено') {
+      if (res === 'Найдено' || res === 'Перезапись / Товар найден') {
         totalPercent += 4.16;
       } else if (res === 'Найдено + ошибка' || res === 'Не найдено + ошибка') {
         totalPercent += 8.32;

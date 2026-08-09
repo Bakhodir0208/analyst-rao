@@ -646,7 +646,7 @@ async function submitMissingResult(result, foundQty, foundKey, targetTask) {
   }
 
   // Показываем мгновенное пуш-уведомление
-  showSuccess(result === 'Пропущено' ? 'Задача пропущена ⏭' : 'Запись сохранена! ✅');
+  showSuccess(result === 'Перезапись / Товар найден' ? 'Товар найден и перезаписан! 🔄' : 'Запись сохранена! ✅');
 
   // Обновляем отображение UI карточки и списка
   if (state.missing.tasks.length === 0) {
@@ -743,29 +743,24 @@ function showConfirmation(result, isRazborFinal, razborTask) {
   const currentTask = isRazborFinal ? razborTask : state.missing.tasks[state.missing.currentIndex];
   const maxQty = (currentTask && currentTask.qty) ? parseInt(currentTask.qty) || 1 : 1;
   const targetKey = (currentTask && currentTask.key) ? String(currentTask.key) : '';
-  const isFound = (result === 'Найдено' || result === 'Найдено + ошибка');
+  const isFound = (result === 'Найдено' || result === 'Найдено + ошибка' || result === 'Перезапись / Товар найден');
 
   const titleEl = document.getElementById('confirmTitleText');
   if (titleEl) {
-    if (result === 'Пропустить' || result === 'Пропущено') {
-      titleEl.textContent = 'Пропустить эту задачу?';
-    } else {
-      titleEl.textContent = isFound
-        ? 'Подтвердите данные найденного товара:'
-        : 'Вы уверены, что хотите отметить товар?';
-    }
+    titleEl.textContent = isFound
+      ? 'Подтвердите данные найденного товара:'
+      : 'Вы уверены, что хотите отметить товар?';
   }
 
   const labelEl = document.getElementById('confirmResultLabel');
   if (labelEl) {
     const emoji = {
-      'Найдено':             '✅ Найдено',
-      'Не найдено':          '❌ Не найдено',
-      'Найдено + ошибка':    '✅⚠ Найдено + ошибка',
-      'Не найдено + ошибка': '❌⚠ Не найдено + ошибка',
-      'На разбор':           '🔎 На разбор',
-      'Пропустить':          '⏭ Пропущено',
-      'Пропущено':          '⏭ Пропущено',
+      'Найдено':                   '✅ Найдено',
+      'Не найдено':                '❌ Не найдено',
+      'Найдено + ошибка':          '✅⚠ Найдено + ошибка',
+      'Не найдено + ошибка':       '❌⚠ Не найдено + ошибка',
+      'На разбор':                 '🔎 На разбор',
+      'Перезапись / Товар найден': '🔄 Перезапись / Товар найден',
     };
     labelEl.textContent = emoji[result] || result;
   }
@@ -818,9 +813,9 @@ async function confirmAndSubmit() {
   const isRazbor = state.missing.pendingIsRazbor;
   const rtask    = state.missing.pendingRazborTask;
 
-  const finalResult = (result === 'Пропустить') ? 'Пропущено' : result;
+  const finalResult = result;
 
-  const isFound  = (finalResult === 'Найдено' || finalResult === 'Найдено + ошибка');
+  const isFound  = (finalResult === 'Найдено' || finalResult === 'Найдено + ошибка' || finalResult === 'Перезапись / Товар найден');
   let foundQty = null;
   let foundKey = null;
 
@@ -1035,9 +1030,9 @@ async function submitRazborFinalResult(result, task, foundQty, foundKey) {
   const rbRazbor = document.getElementById('rbRazbor');
   if (rbRazbor) rbRazbor.onclick = () => showConfirmation('На разбор', false, null);
 
-  // Кнопка «Пропустить»
+  // Кнопка «Перезапись / Товар найден»
   const rbSkip = document.getElementById('rbSkip');
-  if (rbSkip) rbSkip.onclick = () => showConfirmation('Пропустить', false, null);
+  if (rbSkip) rbSkip.onclick = () => showConfirmation('Перезапись / Товар найден', false, null);
 
   // Предотвращение случайной отправки по Enter от сканера штрихкодов
   const foundKeyInput = document.getElementById('confirmFoundKeyInput');
