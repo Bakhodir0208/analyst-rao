@@ -269,7 +269,7 @@ async function apiGet(params) {
     method: 'GET',
     redirect: 'follow',
     cache: 'no-cache',
-  }, 15000);
+  }, 30000);
 
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json();
@@ -282,7 +282,7 @@ async function apiPost(data) {
     cache: 'no-cache',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify(data),
-  }, 15000);
+  }, 30000);
 
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json();
@@ -351,13 +351,24 @@ function setupEventListeners() {
     showScreen('bezshk');
     initBezShkScreen();
   });
-  ui.btnBP.addEventListener('click',      () => showScreen('bp'));
+  ui.btnBP.addEventListener('click', () => {
+    showScreen('bp');
+    initBpScreen();
+  });
   ui.btnLogout.addEventListener('click',  handleLogout);
 
   // Back buttons
   ui.btnBackFromMissing.addEventListener('click', () => showScreen('dashboard'));
   ui.btnBackFromBezShk.addEventListener('click',  () => showScreen('dashboard'));
-  ui.btnBackFromBP.addEventListener('click',      () => showScreen('dashboard'));
+  ui.btnBackFromBP.addEventListener('click', () => {
+    if (state.bp && state.bp.currentSubscreen === 'bp-task-view') {
+      exitBpZone();
+    } else {
+      showScreen('dashboard');
+    }
+  });
+
+  setupBpEventListeners();
 
   // Missing module
   document.getElementById('btnMissingRefresh').addEventListener('click', initMissingScreen);
@@ -1306,7 +1317,7 @@ async function confirmAndSubmitBezshk() {
       if (bcInput) bcInput.value = '';
       if (qtyInput) qtyInput.value = 1;
       setTimeout(() => {
-        try { if (bcInput) bcInput.focus(); } catch(e) {}
+          try { if (bcInput) bcInput.focus(); } catch(e) {}
       }, 100);
       fetchPlanPercent();
     } else {
@@ -1318,4 +1329,502 @@ async function confirmAndSubmitBezshk() {
     if (btnOk) btnOk.disabled = false;
     if (btnCancel) btnCancel.disabled = false;
   }
+}
+
+// ═══════════════════════════════════════════
+//  ПОИСК БП (БИЗНЕС ПОДДЕРЖКА) — MODULE FUNCTIONS
+// ═══════════════════════════════════════════
+
+state.bp = {
+  tasks: [],
+  locks: [],
+  warehouse: 'Фулфилмент',
+  selectedFloor: '',
+  filteredTasks: [],
+  currentIndex: 0,
+  currentFoundQty: 0,
+  currentSubscreen: 'bp-select-view'
+};
+
+async function initBpScreen() {
+  renderBpSubscreen('bp-select-view');
+  showLoader('Загрузка задач БП...');
+  try {
+    const res = await apiGet({ action: 'getBpTasks' });
+    if (res && res.success) {
+      state.bp.tasks = res.tasks || [];
+      state.bp.locks = res.locks || [];
+      updateBpWarehouseTabs();
+      renderBpFloorGrid();
+    } else {
+      const errText = (res && res.error) ? res.error : 'Ошибка загрузки задач БП';
+      if (errText.indexOf('Неизвестный action') !== -1) {
+        showError('Необходим деплой Code.gs в Google Apps Script!');
+      } else {
+        showError(errText);
+      }
+    }
+  } catch (err) {
+    showError(err && err.message ? err.message : 'Ошибка связи с сервером при получении задач БП');
+  } finally {
+    hideLoader();
+  }
+}
+
+function renderBpSubscreen(subscreenId) {
+  state.bp.currentSubscreen = subscreenId;
+  const subscreens = ['bp-select-view', 'bp-task-view', 'bp-done-view'];
+  subscreens.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = (id === subscreenId) ? 'block' : 'none';
+  });
+}
+
+function updateBpWarehouseTabs() {
+  const fulfillmentTasks = state.bp.tasks.filter(t => t.warehouse === 'Фулфилмент');
+  const sergeliTasks     = state.bp.tasks.filter(t => t.warehouse === 'Сергели');
+  const personalTasks    = state.bp.tasks.filter(t => t.assignedTo && (t.assignedTo === state.employeeName || t.assignedTo.indexOf(state.employeeName) !== -1));
+
+  const tabFulfillment = document.getElementById('bpTabFulfillment');
+  const tabSergeli     = document.getElementById('bpTabSergeli');
+  const tabPersonal    = document.getElementById('bpTabPersonal');
+
+  if (tabFulfillment) tabFulfillment.textContent = `Фулфилмент (${fulfillmentTasks.length})`;
+  if (tabSergeli)     tabSergeli.textContent     = `Сергели (${sergeliTasks.length})`;
+  if (tabPersonal)    tabPersonal.textContent    = `На мне (${personalTasks.length})`;
+}
+
+function renderBpFloorGrid() {
+  const gridContainer = document.getElementById('bpFloorSelectGrid');
+  const noTasksMsg    = document.getElementById('bpNoTasksMsg');
+  const startBtn      = document.getElementById('btnBpStartSearch');
+  if (!gridContainer) return;
+
+  gridContainer.innerHTML = '';
+  state.bp.selectedFloor = '';
+  if (startBtn) startBtn.disabled = true;
+
+  let whTasks = [];
+  if (state.bp.warehouse === 'Назначено мне') {
+    whTasks = state.bp.tasks.filter(t => t.assignedTo && (t.assignedTo === state.employeeName || t.assignedTo.indexOf(state.employeeName) !== -1));
+  } else {
+    whTasks = state.bp.tasks.filter(t => t.warehouse === state.bp.warehouse);
+  }
+
+  if (whTasks.length === 0) {
+    if (noTasksMsg) noTasksMsg.style.display = 'block';
+    return;
+  } else {
+    if (noTasksMsg) noTasksMsg.style.display = 'none';
+  }
+
+  // Группировка по этажам (например M1, M2, S1 из ячейки M1.76.5.1)
+  const floorMap = {};
+  whTasks.forEach(task => {
+    const parts = (task.cell || '').split('.');
+    const floor = parts[0] || 'Прочие';
+    if (!floorMap[floor]) floorMap[floor] = [];
+    floorMap[floor].push(task);
+  });
+
+  const floors = Object.keys(floorMap).sort();
+
+  floors.forEach(floor => {
+    const count = floorMap[floor].length;
+    const lock  = state.bp.locks.find(l => l.warehouse === state.bp.warehouse && l.floor === floor);
+
+    const btn = document.createElement('button');
+    btn.className = 'grid-option-btn';
+    btn.type = 'button';
+
+    if (lock) {
+      if (lock.employee === state.employeeName) {
+        btn.classList.add('active');
+        btn.innerHTML = `
+          <div class="opt-val">${floor}</div>
+          <div class="opt-sub">${count} ячеек (Ваша бронь)</div>
+        `;
+      } else {
+        btn.disabled = true;
+        btn.classList.add('locked');
+        btn.innerHTML = `
+          <div class="opt-val" style="color: #f43f5e;">🔒 ${floor}</div>
+          <div class="opt-sub" style="color: #f43f5e; font-weight: 700;">Занят: ${lock.employee}</div>
+        `;
+      }
+    } else {
+      btn.innerHTML = `
+        <div class="opt-val">${floor}</div>
+        <div class="opt-sub">${count} ячеек</div>
+      `;
+    }
+
+    if (!lock || lock.employee === state.employeeName) {
+      btn.onclick = () => {
+        document.querySelectorAll('#bpFloorSelectGrid .grid-option-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.bp.selectedFloor = floor;
+        if (startBtn) startBtn.disabled = false;
+      };
+    }
+
+    gridContainer.appendChild(btn);
+  });
+}
+
+function parseCellSegments(cellStr) {
+  const str = String(cellStr || '').trim().toUpperCase();
+  const parts = str.split('.');
+  return parts.map(part => {
+    const num = parseInt(part.replace(/\D/g, ''));
+    return {
+      raw: part,
+      num: isNaN(num) ? 0 : num
+    };
+  });
+}
+
+function compareCellsAsc(cellA, cellB) {
+  const segsA = parseCellSegments(cellA);
+  const segsB = parseCellSegments(cellB);
+  const maxLen = Math.max(segsA.length, segsB.length);
+
+  for (let i = 0; i < maxLen; i++) {
+    const a = segsA[i];
+    const b = segsB[i];
+    if (!a) return -1;
+    if (!b) return 1;
+
+    if (a.raw !== b.raw) {
+      if (a.num !== b.num) {
+        return a.num - b.num;
+      }
+      return a.raw.localeCompare(b.raw, undefined, { numeric: true });
+    }
+  }
+  return 0;
+}
+
+async function startBpSearch() {
+  if (!state.bp.selectedFloor) return;
+  showLoader('Зазервирование зоны...');
+  try {
+    const lockRes = await apiPost({
+      action: 'lockBpZone',
+      warehouse: state.bp.warehouse,
+      floor: state.bp.selectedFloor,
+      employee: state.employeeName
+    });
+
+    if (lockRes && !lockRes.success) {
+      if (lockRes.error && lockRes.error.indexOf('Неизвестный action') !== -1) {
+        showError('Обновите деплой Code.gs в Apps Script!');
+      } else {
+        showError(lockRes.error || 'Не удалось заблокировать зону');
+        hideLoader();
+        initBpScreen();
+        return;
+      }
+    }
+
+    // Фильтруем задачи выбранного этажа
+    let whTasks = [];
+    if (state.bp.warehouse === 'Назначено мне') {
+      whTasks = state.bp.tasks.filter(t => t.assignedTo && (t.assignedTo === state.employeeName || t.assignedTo.indexOf(state.employeeName) !== -1));
+    } else {
+      whTasks = state.bp.tasks.filter(t => t.warehouse === state.bp.warehouse);
+    }
+
+    state.bp.filteredTasks = whTasks.filter(t => (t.cell || '').indexOf(state.bp.selectedFloor) === 0);
+    state.bp.filteredTasks.sort((a, b) => compareCellsAsc(a.cell, b.cell));
+    state.bp.currentIndex = 0;
+
+    if (state.bp.filteredTasks.length === 0) {
+      renderBpSubscreen('bp-done-view');
+    } else {
+      renderBpSubscreen('bp-task-view');
+      renderBpTaskCard();
+    }
+  } catch (e) {
+    showError(e && e.message ? e.message : 'Ошибка блокировки зоны!');
+  } finally {
+    hideLoader();
+  }
+}
+
+function renderBpTaskCard() {
+  const tasks = state.bp.filteredTasks;
+  if (state.bp.currentIndex >= tasks.length) {
+    renderBpSubscreen('bp-done-view');
+    return;
+  }
+
+  const task = tasks[state.bp.currentIndex];
+  state.bp.currentFoundQty = task.targetQty || 1;
+
+  // Элементы
+  const progressLabel = document.getElementById('bpTaskProgressLabel');
+  const percentLabel  = document.getElementById('bpTaskPercentLabel');
+  const progressBar   = document.getElementById('bpTaskProgressBar');
+
+  const total = tasks.length;
+  const curr  = state.bp.currentIndex + 1;
+  const pct   = Math.round(((curr - 1) / total) * 100);
+
+  if (progressLabel) progressLabel.textContent = `Товар ${curr} из ${total}`;
+  if (percentLabel)  percentLabel.textContent  = `${pct}%`;
+  if (progressBar)   progressBar.style.width   = `${pct}%`;
+
+  const cellEl        = document.getElementById('bpTaskCell');
+  const productLinkEl = document.getElementById('bpTaskProductLink');
+  const barcodeTextEl = document.getElementById('bpTaskBarcodeText');
+  const wmsLinkEl     = document.getElementById('bpTaskWmsLink');
+  const targetQtyEl   = document.getElementById('bpTaskTargetQty');
+  const cellsCountEl  = document.getElementById('bpTaskCellsCount');
+  const qtyValEl      = document.getElementById('bpQtyVal');
+
+  if (cellEl) cellEl.textContent = task.cell || '—';
+
+  const pId = task.productId || task.skuId || '';
+  if (productLinkEl) {
+    if (pId) {
+      productLinkEl.href = `https://uzum.uz/product/${pId}`;
+      productLinkEl.style.display = 'flex';
+    } else {
+      productLinkEl.style.display = 'none';
+    }
+  }
+
+  if (barcodeTextEl) barcodeTextEl.textContent = task.barcode || '—';
+
+  if (wmsLinkEl) {
+    wmsLinkEl.href = `https://wms.uzum.uz/information/product/${task.barcode}`;
+  }
+
+  if (targetQtyEl)  targetQtyEl.textContent = `${task.targetQty || 1} шт.`;
+  if (cellsCountEl) cellsCountEl.textContent = task.totalCellsCount || 1;
+
+  if (qtyValEl) qtyValEl.textContent = state.bp.currentFoundQty;
+}
+
+function updateBpQty(delta) {
+  const task = state.bp.filteredTasks[state.bp.currentIndex];
+  const maxQty = task ? (task.targetQty || 999) : 999;
+  let newQty = state.bp.currentFoundQty + delta;
+  if (newQty < 0) newQty = 0;
+  if (newQty > maxQty) newQty = maxQty;
+  state.bp.currentFoundQty = newQty;
+  const qtyValEl = document.getElementById('bpQtyVal');
+  if (qtyValEl) qtyValEl.textContent = newQty;
+}
+
+function showBpConfirmation(resultType) {
+  const tasks = state.bp.filteredTasks;
+  if (state.bp.currentIndex >= tasks.length) return;
+  const task = tasks[state.bp.currentIndex];
+
+  state.bp.pendingResult = resultType;
+
+  const overlay   = document.getElementById('bpConfirmOverlay');
+  const titleEl   = document.getElementById('bpConfirmTitleText');
+  const labelEl   = document.getElementById('bpConfirmResultLabel');
+  const summaryEl = document.getElementById('bpConfirmSummary');
+  const foundWrap = document.getElementById('bpConfirmFoundKeyWrap');
+  const foundInput= document.getElementById('bpConfirmFoundKeyInput');
+
+  const isFound = (resultType === 'Найдено');
+
+  if (titleEl) {
+    titleEl.textContent = isFound
+      ? 'Подтвердите данные решения'
+      : 'Подтвердите отказ от поиска';
+  }
+
+  if (labelEl) {
+    labelEl.textContent = isFound ? '✅ Найдено' : '❌ Не найдено';
+    labelEl.className = isFound ? 'bp-modal-badge' : 'bp-modal-badge badge-notfound';
+  }
+
+  const foundQty = isFound ? (state.bp.currentFoundQty || task.targetQty || 1) : 0;
+
+  if (summaryEl) {
+    summaryEl.innerHTML = `
+      <div class="bp-summary-card">
+        <span class="bp-summary-key">Ячейка поиска</span>
+        <span class="bp-summary-val monospace" style="color: #818cf8;">${task.cell}</span>
+      </div>
+      <div class="bp-summary-card">
+        <span class="bp-summary-key">Штрихкод (ШК)</span>
+        <span class="bp-summary-val monospace">${task.barcode}</span>
+      </div>
+      <div class="bp-summary-card" style="grid-column: span 2;">
+        <span class="bp-summary-key">Найденное количество</span>
+        <span class="bp-summary-val" style="color: ${isFound ? '#34d399' : '#f43f5e'}; font-size: 1.1rem;">
+          ${foundQty} шт. <span style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">(из ${task.targetQty || 1} шт.)</span>
+        </span>
+      </div>
+    `;
+  }
+
+  if (foundWrap) {
+    foundWrap.style.display = isFound ? 'flex' : 'none';
+  }
+
+  if (foundInput && isFound) {
+    foundInput.value = task.cell;
+    setTimeout(() => {
+      try { foundInput.focus(); foundInput.select(); } catch(e) {}
+    }, 150);
+  }
+
+  if (overlay) overlay.style.display = 'flex';
+}
+
+function hideBpConfirmation() {
+  const overlay = document.getElementById('bpConfirmOverlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+async function confirmAndSubmitBpModal() {
+  const resultType = state.bp.pendingResult || 'Найдено';
+  const tasks = state.bp.filteredTasks;
+  if (state.bp.currentIndex >= tasks.length) return;
+  const task = tasks[state.bp.currentIndex];
+
+  let foundKey = null;
+  if (resultType === 'Найдено') {
+    const input = document.getElementById('bpConfirmFoundKeyInput');
+    const val = input ? input.value.trim().toUpperCase() : '';
+    if (!val) {
+      showError('Отсканируйте или введите ячейку!');
+      highlightInvalidInput(input);
+      return;
+    }
+    foundKey = val;
+  }
+
+  hideBpConfirmation();
+  await submitBpTaskResult(resultType, foundKey);
+}
+
+async function submitBpTaskResult(resultType, foundKey) {
+  const tasks = state.bp.filteredTasks;
+  if (state.bp.currentIndex >= tasks.length) return;
+  const task = tasks[state.bp.currentIndex];
+
+  let foundQty = 0;
+  if (resultType === 'Найдено') {
+    foundQty = state.bp.currentFoundQty;
+  } else {
+    foundQty = 0;
+  }
+
+  showLoader('Сохранение результата БП...');
+
+  try {
+    const res = await apiPost({
+      action: 'logBpResult',
+      rowIndex: task.rowIndex,
+      barcode: task.barcode,
+      cell: task.cell,
+      foundKey: foundKey || task.cell,
+      foundQty: foundQty,
+      employeeId: state.employeeId,
+      employeeName: state.employeeName
+    });
+
+    if (res && res.success) {
+      showSuccess(foundQty > 0 ? 'Товар найден! ✅' : 'Запись сохранена! ✅');
+      state.bp.currentIndex++;
+      fetchPlanPercent();
+
+      if (state.bp.currentIndex >= tasks.length) {
+        renderBpSubscreen('bp-done-view');
+      } else {
+        renderBpTaskCard();
+      }
+    } else {
+      showError(res && res.error ? res.error : 'Ошибка записи БП');
+    }
+  } catch (e) {
+    showError(e.message || 'Ошибка связи с сервером');
+  } finally {
+    hideLoader();
+  }
+}
+
+async function exitBpZone() {
+  if (state.bp.selectedFloor && state.employeeName) {
+    try {
+      await apiPost({
+        action: 'unlockBpZone',
+        warehouse: state.bp.warehouse,
+        floor: state.bp.selectedFloor,
+        employee: state.employeeName
+      });
+    } catch (e) {}
+  }
+  initBpScreen();
+}
+
+function setupBpEventListeners() {
+  const btnRefresh = document.getElementById('btnBpRefreshTasks');
+  if (btnRefresh) btnRefresh.onclick = initBpScreen;
+
+  // Переключение складов
+  const warehouseSelect = document.getElementById('bpWarehouseSelect');
+  if (warehouseSelect) {
+    warehouseSelect.querySelectorAll('.segment-btn').forEach(btn => {
+      btn.onclick = () => {
+        warehouseSelect.querySelectorAll('.segment-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.bp.warehouse = btn.dataset.value;
+        renderBpFloorGrid();
+      };
+    });
+  }
+
+  // Кнопка «Начать поиск»
+  const btnStart = document.getElementById('btnBpStartSearch');
+  if (btnStart) btnStart.onclick = startBpSearch;
+
+  // Копирование ШК в задаче БП
+  const bpBarcodeBtn = document.getElementById('bpTaskBarcode');
+  if (bpBarcodeBtn) {
+    bpBarcodeBtn.onclick = function() {
+      const txt = document.getElementById('bpTaskBarcodeText');
+      if (txt) copyText(txt.textContent, this);
+    };
+  }
+
+  // Количество +/-
+  const btnMinus = document.getElementById('btnBpQtyMinus');
+  const btnPlus  = document.getElementById('btnBpQtyPlus');
+  if (btnMinus) btnMinus.onclick = () => updateBpQty(-1);
+  if (btnPlus)  btnPlus.onclick  = () => updateBpQty(1);
+
+  // Кнопки решений
+  const btnFound    = document.getElementById('btnBpFound');
+  const btnNotFound = document.getElementById('btnBpNotFound');
+  const btnSkip     = document.getElementById('btnBpSkip');
+  const btnExit     = document.getElementById('btnBpExit');
+  const btnDoneBack = document.getElementById('btnBpDoneBack');
+
+  if (btnFound)    btnFound.onclick    = () => showBpConfirmation('Найдено');
+  if (btnNotFound) btnNotFound.onclick = () => showBpConfirmation('Не найдено');
+  if (btnSkip)     btnSkip.onclick     = () => {
+    state.bp.currentIndex++;
+    if (state.bp.currentIndex >= state.bp.filteredTasks.length) {
+      renderBpSubscreen('bp-done-view');
+    } else {
+      renderBpTaskCard();
+    }
+  };
+
+  const btnCancelModal  = document.getElementById('btnBpCancelModal');
+  const btnConfirmOk    = document.getElementById('btnBpConfirmModalOk');
+  if (btnCancelModal) btnCancelModal.onclick = hideBpConfirmation;
+  if (btnConfirmOk)   btnConfirmOk.onclick   = confirmAndSubmitBpModal;
+  if (btnExit)     btnExit.onclick     = exitBpZone;
+  if (btnDoneBack) btnDoneBack.onclick = exitBpZone;
 }

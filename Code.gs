@@ -25,6 +25,7 @@
 // Имена листов
 var SHEET_EMPLOYEES = 'Сотрудники';
 var SHEET_LOG       = 'Журнал';
+var BP_SPREADSHEET_ID = '1-Ec83kDyLZvZ_l7zNyu3VrH-XSutfa0oI4FJ16bZY5Y';
 
 // ─────────────────────────────────────────
 //  GET — Авторизация и чтение данных
@@ -47,6 +48,10 @@ function doGet(e) {
 
     if (action === 'getRazborTasks') {
       return handleGetRazborTasks(e.parameter.id);
+    }
+
+    if (action === 'getBpTasks') {
+      return handleGetBpTasks();
     }
 
     return jsonOk({ success: false, error: 'Неизвестный action: ' + action });
@@ -72,6 +77,18 @@ function doPost(e) {
 
     if (data.action === 'logBezShkResult') {
       return handleLogBezShkResult(data);
+    }
+
+    if (data.action === 'logBpResult') {
+      return handleLogBpResult(data);
+    }
+
+    if (data.action === 'lockBpZone') {
+      return handleLockBpZone(data);
+    }
+
+    if (data.action === 'unlockBpZone') {
+      return handleUnlockBpZone(data);
     }
 
     return jsonOk({ success: false, error: 'Неизвестный action: ' + data.action });
@@ -1272,6 +1289,380 @@ function handleLogBezShkResult(data) {
     0,                                    // O: Сумма найденно
     'Обработка БезШК'                     // P: Тип работы
   ]);
+
+  return jsonOk({ success: true });
+}
+
+// ─────────────────────────────────────────────────────────
+//  ПОИСК БП (БИЗНЕС ПОДДЕРЖКА) — БЭКЕНД ФУНКЦИИ
+// ─────────────────────────────────────────────────────────
+
+function isEmployeeMatch(a, b) {
+  var strA = String(a || '').trim().toLowerCase();
+  var strB = String(b || '').trim().toLowerCase();
+  if (!strA || !strB) return false;
+  return strA === strB || strA.indexOf(strB) !== -1 || strB.indexOf(strA) !== -1;
+}
+
+function getBpSpreadsheet() {
+  try {
+    return SpreadsheetApp.openById(BP_SPREADSHEET_ID);
+  } catch (e) {
+    return null;
+  }
+}
+
+function mapBpHeaders(headers) {
+  var colMap = {
+    ticketLink: -1,
+    barcode: -1,
+    targetQty: -1,
+    searchDate: -1,
+    cells: -1,
+    warehouse: -1,
+    status: -1,
+    foundQty: -1,
+    employee: -1,
+    productId: -1
+  };
+  for (var i = 0; i < headers.length; i++) {
+    var h = String(headers[i] || '').trim().toLowerCase();
+    if (h.indexOf('ссылка') === 0 || h.indexOf('заявк') !== -1) {
+      colMap.ticketLink = i;
+    } else if (h === 'шк' || h === 'штрихкод' || h === 'штрих-код') {
+      colMap.barcode = i;
+    } else if (h.indexOf('кол-во для поиска') !== -1 || h.indexOf('кол во для поиска') !== -1 || h.indexOf('кол-во поиска') !== -1) {
+      colMap.targetQty = i;
+    } else if ((h.indexOf('кол-во') === 0 || h.indexOf('кол во') === 0 || h.indexOf('количество') !== -1) && colMap.targetQty === -1 && h.indexOf('найден') === -1) {
+      colMap.targetQty = i;
+    } else if (h === 'дата поиска' || h.indexOf('дата поис') !== -1) {
+      colMap.searchDate = i;
+    } else if (h.indexOf('ячейка') === 0 || h.indexOf('ячейка для') !== -1) {
+      colMap.cells = i;
+    } else if (h === 'склад') {
+      colMap.warehouse = i;
+    } else if (h === 'статус') {
+      colMap.status = i;
+    } else if (h.indexOf('найден') !== -1) {
+      colMap.foundQty = i;
+    } else if (h.indexOf('сотрудник') !== -1) {
+      colMap.employee = i;
+    } else if (h === 'sku_id' || h === 'skuid' || h === 'product_id' || h === 'productid' || h.indexOf('product') !== -1 || h.indexOf('sku') !== -1 || h.indexOf('айди') !== -1) {
+      colMap.productId = i;
+    }
+  }
+  return colMap;
+}
+
+function cleanExpiredBpLocks(bpSs) {
+  if (!bpSs) return;
+  var lockSheet = bpSs.getSheetByName('Блокировки');
+  if (!lockSheet) return;
+  var data = lockSheet.getDataRange().getValues();
+  if (data.length < 2) return;
+  var now = new Date().getTime();
+  var fourHoursMs = 4 * 60 * 60 * 1000;
+
+  var validRows = [data[0]];
+  var changed = false;
+
+  for (var i = 1; i < data.length; i++) {
+    var lockTime = new Date(data[i][3]).getTime();
+    if (!isNaN(lockTime) && (now - lockTime <= fourHoursMs)) {
+      validRows.push(data[i]);
+    } else {
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    lockSheet.clearContents();
+    if (validRows.length > 0) {
+      lockSheet.getRange(1, 1, validRows.length, validRows[0].length).setValues(validRows);
+    }
+  }
+}
+
+function handleGetBpTasks() {
+  var bpSs = getBpSpreadsheet();
+  if (!bpSs) return jsonOk({ success: false, error: 'Не удалось открыть таблицу БП по ID' });
+
+  cleanExpiredBpLocks(bpSs);
+
+  var mainSheet = bpSs.getSheetByName('Рабочий лист') || bpSs.getSheets()[0];
+  var logSheet  = bpSs.getSheetByName('Детали поиска');
+
+  var mainData = mainSheet.getDataRange().getValues();
+  if (mainData.length < 2) {
+    return jsonOk({ success: true, tasks: [], locks: [] });
+  }
+
+  var headers = mainData[0];
+  var colMap  = mapBpHeaders(headers);
+
+  var checkedCells = {};
+  if (logSheet) {
+    var logData = logSheet.getDataRange().getValues();
+    for (var i = 1; i < logData.length; i++) {
+      var rowIdx = String(logData[i][1]).trim();
+      var cellName = String(logData[i][3]).trim();
+      if (!checkedCells[rowIdx]) checkedCells[rowIdx] = {};
+      checkedCells[rowIdx][cellName] = true;
+    }
+  }
+
+  var tasks = [];
+  for (var r = 1; r < mainData.length; r++) {
+    var row = mainData[r];
+    var status    = String(row[colMap.status] || '').trim();
+    var warehouse = String(row[colMap.warehouse] || '').trim();
+
+    if (status === '' && warehouse !== '') {
+      var barcode    = String(row[colMap.barcode] || '').trim();
+      var cellText   = String(row[colMap.cells] || '').trim();
+      var rawTarget = colMap.targetQty !== -1 ? row[colMap.targetQty] : 1;
+      var targetQty = 1;
+      if (rawTarget !== undefined && rawTarget !== null && rawTarget !== '') {
+        var parsedT = parseInt(String(rawTarget).replace(/\s+/g, ''));
+        if (!isNaN(parsedT) && parsedT > 0) targetQty = parsedT;
+      }
+      var ticketLink = colMap.ticketLink !== -1 ? String(row[colMap.ticketLink] || '').trim() : '';
+
+      if (!barcode || !cellText) continue;
+
+      var rawCells = cellText.split(/[\n,;]+/);
+      var cellsForThisRow = [];
+
+      for (var c = 0; c < rawCells.length; c++) {
+        var cell = rawCells[c].trim();
+        if (!cell || !/^[A-Za-z0-9]+(\.\d+)+$/.test(cell)) continue;
+        var isChecked = checkedCells[r + 1] && checkedCells[r + 1][cell];
+        if (!isChecked) cellsForThisRow.push(cell);
+      }
+
+      var totalValidCellsCount = rawCells.filter(function(x) {
+        return x.trim() !== '' && /^[A-Za-z0-9]+(\.\d+)+$/.test(x.trim());
+      }).length;
+
+      for (var k = 0; k < cellsForThisRow.length; k++) {
+        var cellItem = cellsForThisRow[k];
+        var finalWarehouse = warehouse;
+        if (cellItem.indexOf('SR') === 0 || cellItem.indexOf('BR') === 0) {
+          finalWarehouse = 'Сергели';
+        }
+        tasks.push({
+          rowIndex: r + 1,
+          barcode: barcode,
+          warehouse: finalWarehouse,
+          cell: cellItem,
+          targetQty: targetQty,
+          ticketLink: ticketLink,
+          totalCellsCount: totalValidCellsCount,
+          assignedTo: colMap.employee !== -1 ? String(row[colMap.employee] || '').trim() : '',
+          productId: colMap.productId !== -1 ? String(row[colMap.productId] || '').trim() : ''
+        });
+      }
+    }
+  }
+
+  var locksList = [];
+  var lockSheet = bpSs.getSheetByName('Блокировки');
+  if (lockSheet) {
+    var lockData = lockSheet.getDataRange().getValues();
+    for (var i = 1; i < lockData.length; i++) {
+      locksList.push({
+        warehouse: String(lockData[i][0] || '').trim(),
+        floor:     String(lockData[i][1] || '').trim(),
+        employee:  String(lockData[i][2] || '').trim(),
+        date:      lockData[i][3]
+      });
+    }
+  }
+
+  return jsonOk({ success: true, tasks: tasks, locks: locksList });
+}
+
+function handleLogBpResult(data) {
+  var rowIndex = parseInt(data.rowIndex);
+  var barcode  = String(data.barcode || '').trim();
+  var cell     = String(data.foundKey || data.cell || '').trim();
+  var foundQty = parseInt(data.foundQty) || 0;
+  var employee = String(data.employeeName || data.employee || '').trim();
+
+  if (!rowIndex || !barcode || !cell || !employee) {
+    return jsonOk({ success: false, error: 'Неполные параметры записи БП' });
+  }
+
+  var bpSs = getBpSpreadsheet();
+  if (!bpSs) return jsonOk({ success: false, error: 'Ошибка подключения к внешней базе БП' });
+
+  var mainSheet = bpSs.getSheetByName('Рабочий лист') || bpSs.getSheets()[0];
+  var logSheet  = bpSs.getSheetByName('Детали поиска');
+  if (!logSheet) {
+    logSheet = bpSs.insertSheet('Детали поиска');
+    logSheet.appendRow(['Дата проверки', 'Индекс строки', 'Штрихкод', 'Ячейка', 'Найдено шт.', 'Сотрудник ФИО']);
+  }
+
+  // 1. Запись во внешнюю таблицу БП
+  logSheet.appendRow([new Date(), rowIndex, barcode, cell, foundQty, employee]);
+
+  var headers = mainSheet.getRange(1, 1, 1, mainSheet.getLastColumn()).getValues()[0];
+  var colMap  = mapBpHeaders(headers);
+
+  var rowRange  = mainSheet.getRange(rowIndex, 1, 1, mainSheet.getLastColumn());
+  var rowValues = rowRange.getValues()[0];
+
+  var cellText = String(rowValues[colMap.cells] || '').trim();
+  var rawCells = cellText.split(/[\n,;]+/);
+  var allRequiredCells = [];
+  for (var c = 0; c < rawCells.length; c++) {
+    var cl = rawCells[c].trim();
+    if (cl && /^[A-Za-z0-9]+(\.\d+)+$/.test(cl)) allRequiredCells.push(cl);
+  }
+
+  var logData = logSheet.getDataRange().getValues();
+  var checkedCellsInfo = {};
+  for (var i = 1; i < logData.length; i++) {
+    if (parseInt(logData[i][1]) === rowIndex) {
+      var lCell = String(logData[i][3] || '').trim();
+      var lQty  = parseInt(logData[i][4]) || 0;
+      checkedCellsInfo[lCell] = lQty;
+    }
+  }
+
+  var allChecked = true;
+  var totalFoundQty = 0;
+  for (var k = 0; k < allRequiredCells.length; k++) {
+    var reqCell = allRequiredCells[k];
+    if (checkedCellsInfo[reqCell] === undefined) {
+      allChecked = false;
+    } else {
+      totalFoundQty += checkedCellsInfo[reqCell];
+    }
+  }
+
+  if (allChecked) {
+    var todayStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd.MM.yyyy');
+    var finalStatus = totalFoundQty > 0 ? 'Найден' : 'Не найден';
+
+    if (colMap.status !== -1)     mainSheet.getRange(rowIndex, colMap.status + 1).setValue(finalStatus);
+    if (colMap.foundQty !== -1)   mainSheet.getRange(rowIndex, colMap.foundQty + 1).setValue(totalFoundQty);
+    if (colMap.employee !== -1)   mainSheet.getRange(rowIndex, colMap.employee + 1).setValue(employee);
+    if (colMap.searchDate !== -1) mainSheet.getRange(rowIndex, colMap.searchDate + 1).setValue(todayStr);
+  }
+
+  // 2. Параллельная запись в локальный лог РАО
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var raoLogSheet = getOrCreateMissingLogSheet(ss);
+    raoLogSheet.appendRow([
+      new Date(),
+      data.employeeId   || '',
+      employee,
+      barcode,
+      '', '', '', 'Поиск БП',
+      cell,
+      cell,
+      (foundQty > 0 ? 'Найдено' : 'Не найдено'),
+      1, 0, foundQty, 0,
+      'Поиск БП'
+    ]);
+  } catch (eRaoLog) {}
+
+  return jsonOk({ success: true, allChecked: allChecked, totalFoundQty: totalFoundQty });
+}
+
+function handleLockBpZone(data) {
+  var warehouse = String(data.warehouse || '').trim();
+  var floor     = String(data.floor || '').trim();
+  var employee  = String(data.employee || '').trim();
+  if (!warehouse || !floor || !employee) return jsonOk({ success: false, error: 'Неполные данные' });
+
+  var bpSs = getBpSpreadsheet();
+  if (!bpSs) return jsonOk({ success: false, error: 'Ошибка подключения к БП' });
+
+  cleanExpiredBpLocks(bpSs);
+
+  var lockSheet = bpSs.getSheetByName('Блокировки');
+  if (!lockSheet) {
+    lockSheet = bpSs.insertSheet('Блокировки');
+    lockSheet.appendRow(['Склад', 'Этаж', 'Сотрудник ФИО', 'Дата блокировки']);
+  }
+
+  var lockData = lockSheet.getDataRange().getValues();
+
+  // 1. Проверяем, не занята ли эта зона ДРУГИМ сотрудником
+  for (var i = 1; i < lockData.length; i++) {
+    var lW = String(lockData[i][0] || '').trim();
+    var lF = String(lockData[i][1] || '').trim();
+    var lE = String(lockData[i][2] || '').trim();
+
+    if (lW === warehouse && lF === floor) {
+      if (!isEmployeeMatch(lE, employee)) {
+        return jsonOk({ success: false, error: 'Эта зона уже занята сотрудником: ' + lE });
+      }
+    }
+  }
+
+  // 2. Удаляем предыдущие блокировки ЭТОГО сотрудника на ЭТОМ складе
+  var validRows = [lockData[0]];
+  for (var k = 1; k < lockData.length; k++) {
+    var rowW = String(lockData[k][0] || '').trim();
+    var rowE = String(lockData[k][2] || '').trim();
+    if (!isEmployeeMatch(rowE, employee) || rowW !== warehouse) {
+      validRows.push(lockData[k]);
+    }
+  }
+
+  // 3. Добавляем новую актуальную блокировку
+  validRows.push([warehouse, floor, employee, new Date()]);
+
+  lockSheet.clearContents();
+  lockSheet.getRange(1, 1, validRows.length, validRows[0].length).setValues(validRows);
+
+  return jsonOk({ success: true });
+}
+
+function handleUnlockBpZone(data) {
+  var warehouse = String(data.warehouse || '').trim();
+  var floor     = String(data.floor || '').trim();
+  var employee  = String(data.employee || '').trim();
+  if (!employee) return jsonOk({ success: true });
+
+  var bpSs = getBpSpreadsheet();
+  if (!bpSs) return jsonOk({ success: true });
+
+  var lockSheet = bpSs.getSheetByName('Блокировки');
+  if (!lockSheet) return jsonOk({ success: true });
+
+  var lockData = lockSheet.getDataRange().getValues();
+  if (lockData.length < 2) return jsonOk({ success: true });
+
+  var validRows = [lockData[0]];
+  var changed = false;
+
+  for (var i = 1; i < lockData.length; i++) {
+    var lW = String(lockData[i][0] || '').trim();
+    var lF = String(lockData[i][1] || '').trim();
+    var lE = String(lockData[i][2] || '').trim();
+
+    var isEmp = isEmployeeMatch(lE, employee);
+    var isWh  = !warehouse || lW === warehouse;
+    var isFl  = !floor || lF === floor;
+
+    if (isEmp && isWh && isFl) {
+      changed = true;
+    } else {
+      validRows.push(lockData[i]);
+    }
+  }
+
+  if (changed) {
+    lockSheet.clearContents();
+    if (validRows.length > 0) {
+      lockSheet.getRange(1, 1, validRows.length, validRows[0].length).setValues(validRows);
+    }
+  }
 
   return jsonOk({ success: true });
 }
