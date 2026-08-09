@@ -1468,3 +1468,117 @@ body {
   animation: cardRefreshAnim 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* ── BEZSHK HISTORY LIST ── */
+.bezshk-history-wrap {
+  margin-top: 18px;
+  width: 100%;
+}
+
+.bezshk-history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  padding: 0 4px;
+}
+
+.bezshk-history-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.bezshk-history-count {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.07);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.bezshk-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bezshk-history-empty {
+  text-align: center;
+  padding: 18px;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+}
+
+.bhi-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: 14px;
+  padding: 10px 14px;
+  transition: background 0.15s ease;
+}
+
+.bhi-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.bhi-left {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.bhi-barcode {
+  font-family: monospace;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.5px;
+}
+
+.bhi-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.bhi-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.bhi-badge-shortage {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.bhi-badge-izlishek {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.bhi-badge-brak {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.bhi-badge-compensated {
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+

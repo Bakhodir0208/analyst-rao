@@ -1146,6 +1146,66 @@ state.bezshk = {
   pendingResult: ''
 };
 
+function getBezshkHistoryKey() {
+  return 'rao_bezshk_history_' + (state.employeeId || 'default');
+}
+
+function getBezshkHistory() {
+  try {
+    const raw = localStorage.getItem(getBezshkHistoryKey());
+    return raw ? JSON.parse(raw) : [];
+  } catch(e) {
+    return [];
+  }
+}
+
+function addBezShkHistoryItem(item) {
+  let history = getBezshkHistory();
+  history.unshift(item);
+  if (history.length > 10) history = history.slice(0, 10);
+  try {
+    localStorage.setItem(getBezshkHistoryKey(), JSON.stringify(history));
+  } catch(e) {}
+  renderBezShkHistory();
+}
+
+function renderBezShkHistory() {
+  const container = document.getElementById('bezshkHistoryList');
+  const countEl   = document.getElementById('bezshkHistoryCount');
+  if (!container) return;
+
+  const history = getBezshkHistory();
+  if (countEl) countEl.textContent = `${history.length}/10`;
+
+  container.innerHTML = '';
+
+  if (history.length === 0) {
+    container.innerHTML = '<div class="bezshk-history-empty">История обработанных ШК пуста</div>';
+    return;
+  }
+
+  const badgeMap = {
+    'Излишек':          { text: '➕ Излишек',          cls: 'bhi-badge-izlishek' },
+    'MISSING/SHORTAGE': { text: '⚠️ SHORTAGE',         cls: 'bhi-badge-shortage' },
+    'MISSING / БРАК':   { text: '🚨 БРАК',             cls: 'bhi-badge-brak' },
+    'КОМПЕНСИРОВАН':    { text: '💳 КОМПЕНСИРОВАН',    cls: 'bhi-badge-compensated' }
+  };
+
+  history.forEach(item => {
+    const badgeInfo = badgeMap[item.result] || { text: item.result, cls: '' };
+    const el = document.createElement('div');
+    el.className = 'bhi-item';
+    el.innerHTML = `
+      <div class="bhi-left">
+        <span class="bhi-barcode">${item.barcode || '—'}</span>
+        <span class="bhi-meta">${item.qty || 1} шт. · ${item.time || ''}</span>
+      </div>
+      <span class="bhi-badge ${badgeInfo.cls}">${badgeInfo.text}</span>
+    `;
+    container.appendChild(el);
+  });
+}
+
 function initBezShkScreen() {
   fetchPlanPercent();
   const bcInput = document.getElementById('bezshkBarcode');
@@ -1158,6 +1218,7 @@ function initBezShkScreen() {
   }
   if (qtyInput) qtyInput.value = 1;
   hideBezshkConfirmation();
+  renderBezShkHistory();
 }
 
 function handleBezshkAction(resultType) {
@@ -1230,6 +1291,14 @@ async function confirmAndSubmitBezshk() {
     });
 
     if (res && res.success) {
+      const now = new Date();
+      const timeStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+      addBezShkHistoryItem({
+        barcode: state.bezshk.pendingBarcode,
+        qty:     state.bezshk.pendingQty,
+        result:  state.bezshk.pendingResult,
+        time:    timeStr
+      });
       showSuccess('Запись БезШК сохранена!');
       hideBezshkConfirmation();
       const bcInput = document.getElementById('bezshkBarcode');
