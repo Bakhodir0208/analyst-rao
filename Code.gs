@@ -395,9 +395,10 @@ function calculateEmployeeDailyPercent(employeeName, targetDateStr, logRows, ext
   var empLower = employeeName.toLowerCase().trim();
   var totalPercent = 0;
   var bezshkUniqueBarcodes = {};
+  var bpUniqueSkus = {};
   var tz = Session.getScriptTimeZone();
 
-  // 1. Поиск Миссинга и Обработка БезШК
+  // 1. Поиск Миссинга, Поиск БП и Обработка БезШК
   if (logRows && logRows.length > 0) {
     for (var i = 0; i < logRows.length; i++) {
       var row = logRows[i];
@@ -445,7 +446,8 @@ function calculateEmployeeDailyPercent(employeeName, targetDateStr, logRows, ext
       var col7Val = String(row[7] || '').trim();
 
       if (workType === 'Поиск БП' || col7Val === 'Поиск БП' || res === 'Поиск БП') {
-        totalPercent += 0.79;
+        var key = barcode || ('bp_idx_' + i);
+        bpUniqueSkus[key] = true;
       } else if (res === 'Найдено') {
         totalPercent += 4.16;
       } else if (res === 'Найдено + ошибка' || res === 'Не найдено + ошибка') {
@@ -457,6 +459,9 @@ function calculateEmployeeDailyPercent(employeeName, targetDateStr, logRows, ext
       }
     }
   }
+
+  var uniqueBpCount = Object.keys(bpUniqueSkus).length;
+  totalPercent += (uniqueBpCount * 0.79);
 
   var uniqueBezshkCount = Object.keys(bezshkUniqueBarcodes).length;
   totalPercent += (uniqueBezshkCount * 0.66);
