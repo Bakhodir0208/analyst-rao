@@ -385,6 +385,7 @@ function buildHeaderMap(sheet) {
  *     • Найдено: 4.16%
  *     • Найдено + ошибка: 8.32%
  *     • Не найдено + ошибка: 8.32%
+ * - Поиск БП: 0.79% за каждый проверенный СКУ (после проверки всех ячеек)
  * - Обработка БезШК: 0.66% за каждый УНИКАЛЬНЫЙ ШК сотрудника за данный день
  * - Доп работы: 9.09% за каждый ЧАС работы
  */
@@ -441,7 +442,11 @@ function calculateEmployeeDailyPercent(employeeName, targetDateStr, logRows, ext
         barcode = String(row[3] || '').trim();
       }
 
-      if (res === 'Найдено') {
+      var col7Val = String(row[7] || '').trim();
+
+      if (workType === 'Поиск БП' || col7Val === 'Поиск БП' || res === 'Поиск БП') {
+        totalPercent += 0.79;
+      } else if (res === 'Найдено') {
         totalPercent += 4.16;
       } else if (res === 'Найдено + ошибка' || res === 'Не найдено + ошибка') {
         totalPercent += 8.32;
@@ -1549,25 +1554,25 @@ function handleLogBpResult(data) {
     if (colMap.foundQty !== -1)   mainSheet.getRange(rowIndex, colMap.foundQty + 1).setValue(totalFoundQty);
     if (colMap.employee !== -1)   mainSheet.getRange(rowIndex, colMap.employee + 1).setValue(employee);
     if (colMap.searchDate !== -1) mainSheet.getRange(rowIndex, colMap.searchDate + 1).setValue(todayStr);
-  }
 
-  // 2. Параллельная запись в локальный лог РАО
-  try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var raoLogSheet = getOrCreateMissingLogSheet(ss);
-    raoLogSheet.appendRow([
-      new Date(),
-      data.employeeId   || '',
-      employee,
-      barcode,
-      '', '', '', 'Поиск БП',
-      cell,
-      cell,
-      (foundQty > 0 ? 'Найдено' : 'Не найдено'),
-      1, 0, foundQty, 0,
-      'Поиск БП'
-    ]);
-  } catch (eRaoLog) {}
+    // 2. Параллельная запись в локальный лог РАО (выполняется только при полной проверке всех ячеек СКУ)
+    try {
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      var raoLogSheet = getOrCreateMissingLogSheet(ss);
+      raoLogSheet.appendRow([
+        new Date(),
+        data.employeeId   || '',
+        employee,
+        barcode,
+        '', '', '', 'Поиск БП',
+        allRequiredCells.join(', '),
+        cell,
+        (totalFoundQty > 0 ? 'Найдено' : 'Не найдено'),
+        1, 0, totalFoundQty, 0,
+        'Поиск БП'
+      ]);
+    } catch (eRaoLog) {}
+  }
 
   return jsonOk({ success: true, allChecked: allChecked, totalFoundQty: totalFoundQty });
 }
