@@ -1436,9 +1436,11 @@ function renderBpFloorGrid() {
 
   const floors = Object.keys(floorMap).sort();
 
+  const isPersonalTab = (state.bp.warehouse === 'Назначено мне');
+
   floors.forEach(floor => {
     const count = floorMap[floor].length;
-    const lock  = state.bp.locks.find(l => l.warehouse === state.bp.warehouse && l.floor === floor);
+    const lock  = isPersonalTab ? null : state.bp.locks.find(l => l.warehouse === state.bp.warehouse && l.floor === floor);
 
     const btn = document.createElement('button');
     btn.className = 'grid-option-btn';
@@ -1460,9 +1462,10 @@ function renderBpFloorGrid() {
         `;
       }
     } else {
+      const subLabel = isPersonalTab ? `${count} ячеек` : `${count} ячеек`;
       btn.innerHTML = `
         <div class="opt-val">${floor}</div>
-        <div class="opt-sub">${count} ячеек</div>
+        <div class="opt-sub">${subLabel}</div>
       `;
     }
 

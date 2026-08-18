@@ -1588,6 +1588,11 @@ function handleLockBpZone(data) {
   var employee  = String(data.employee || '').trim();
   if (!warehouse || !floor || !employee) return jsonOk({ success: false, error: 'Неполные данные' });
 
+  // Персональный поиск по назначенным задачам не зависит от общих блокировок свободного поиска
+  if (warehouse === 'Назначено мне') {
+    return jsonOk({ success: true });
+  }
+
   var bpSs = getBpSpreadsheet();
   if (!bpSs) return jsonOk({ success: false, error: 'Ошибка подключения к БП' });
 
@@ -1638,6 +1643,7 @@ function handleUnlockBpZone(data) {
   var floor     = String(data.floor || '').trim();
   var employee  = String(data.employee || '').trim();
   if (!employee) return jsonOk({ success: true });
+  if (warehouse === 'Назначено мне') return jsonOk({ success: true });
 
   var bpSs = getBpSpreadsheet();
   if (!bpSs) return jsonOk({ success: true });
