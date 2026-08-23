@@ -568,6 +568,7 @@ function getOrCreateSummarySheet(ss, monthName) {
       var dayStr = (d < 10 ? '0' + d : d) + '.' + ((monthIdx + 1) < 10 ? '0' + (monthIdx + 1) : (monthIdx + 1)) + '.' + year;
       headers.push(dayStr);
     }
+    headers.push('Итог');
 
     sheet.appendRow(headers);
     var hRange = sheet.getRange(1, 1, 1, headers.length);
@@ -584,7 +585,16 @@ function getOrCreateSummarySheet(ss, monthName) {
     }
     Logger.log('✓ Автоматически создан сводный лист «' + sheetName + '»');
   } else {
-    // Если лист существует — автоматически дописываем новых сотрудников
+    // Если лист существует — проверяем наличие заголовка «Итог» и дописываем новых сотрудников
+    var lastColHeader = String(sheet.getRange(1, sheet.getLastColumn()).getValue() || '').trim().toLowerCase();
+    if (lastColHeader.indexOf('итог') === -1 && lastColHeader.indexOf('среднее') === -1) {
+      sheet.getRange(1, sheet.getLastColumn() + 1).setValue('Итог')
+           .setFontWeight('bold')
+           .setBackground('#0d2137')
+           .setFontColor('#ffffff')
+           .setFontSize(10);
+    }
+
     var existingLastRow = sheet.getLastRow();
     var existingEmps = {};
     if (existingLastRow >= 2) {
@@ -682,7 +692,7 @@ function updateSummarySheet(ss) {
 
     var summarySheet = sheets[s];
 
-    // Синхронизируем сотрудников из листа «Сотрудники»
+    // Синхронизируем сотрудников и заголовок «Итог»
     getOrCreateSummarySheet(ss, monthName);
 
     var lastCol = summarySheet.getLastColumn();
@@ -708,8 +718,42 @@ function updateSummarySheet(ss) {
       var rowFormats = [];
       var empName = String(empDataRows[r][0] || '').trim();
 
+      var dailyPercents = [];
+
       for (var c = 0; c < numCols; c++) {
-        var dVal = dateHeaders[c];
+        var dVal = String(dateHeaders[c] || '').trim();
+        var dValLower = dVal.toLowerCase();
+
+        if (dValLower.indexOf('итог') !== -1 || dValLower.indexOf('среднее') !== -1) {
+          // Расчёт среднего значения по всем рабочим дням сотрудника
+          if (dailyPercents.length > 0) {
+            var sumP = 0;
+            for (var p = 0; p < dailyPercents.length; p++) {
+              sumP += dailyPercents[p];
+            }
+            var avgPercent = sumP / dailyPercents.length;
+            rowVals.push(avgPercent / 100);
+            rowFormats.push('0.00%');
+
+            if (avgPercent >= 100) {
+              rowBgs.push('#e6f4ea');   // Мягкий зелёный
+              rowFonts.push('#137333');
+            } else if (avgPercent >= 50) {
+              rowBgs.push('#fef7e0');   // Мягкий жёлтый
+              rowFonts.push('#b06000');
+            } else {
+              rowBgs.push('#fce8e6');   // Мягкий красный
+              rowFonts.push('#c5221f');
+            }
+          } else {
+            rowVals.push('');
+            rowBgs.push('#ffffff');
+            rowFonts.push('#000000');
+            rowFormats.push('@');
+          }
+          continue;
+        }
+
         if (!empName || !dVal) {
           rowVals.push('');
           rowBgs.push('#ffffff');
@@ -722,6 +766,7 @@ function updateSummarySheet(ss) {
         var calcPercent = calculateEmployeeDailyPercent(empName, dateStr, logRows, extraWorkRows);
 
         if (calcPercent > 0) {
+          dailyPercents.push(calcPercent);
           var val = calcPercent / 100;
           rowVals.push(val);
           rowFormats.push('0.00%');
