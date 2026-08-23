@@ -1493,11 +1493,12 @@ function handleGetBpTasks() {
 }
 
 function handleLogBpResult(data) {
-  var rowIndex = parseInt(data.rowIndex);
-  var barcode  = String(data.barcode || '').trim();
-  var cell     = String(data.foundKey || data.cell || '').trim();
-  var foundQty = parseInt(data.foundQty) || 0;
-  var employee = String(data.employeeName || data.employee || '').trim();
+  var rowIndex   = parseInt(data.rowIndex);
+  var barcode    = String(data.barcode || '').trim();
+  var targetCell = String(data.cell || '').trim();
+  var cell       = String(data.foundKey || data.cell || '').trim();
+  var foundQty   = parseInt(data.foundQty) || 0;
+  var employee   = String(data.employeeName || data.employee || '').trim();
 
   if (!rowIndex || !barcode || !cell || !employee) {
     return jsonOk({ success: false, error: 'Неполные параметры записи БП' });
@@ -1570,7 +1571,7 @@ function handleLogBpResult(data) {
         employee,
         barcode,
         '', '', '', 'Поиск БП',
-        allRequiredCells.join(', '),
+        targetCell || cell,
         cell,
         (totalFoundQty > 0 ? 'Найдено' : 'Не найдено'),
         1, 0, totalFoundQty, 0,
