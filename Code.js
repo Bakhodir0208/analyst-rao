@@ -1559,28 +1559,9 @@ function handleLogBpResult(data) {
     logSheet.appendRow(['Дата проверки', 'Индекс строки', 'Штрихкод', 'Ячейка', 'Найдено шт.', 'Сотрудник ФИО']);
   }
 
-  // 1. Запись во внешнюю таблицу БП (Детали поиска) - фиксируем целевую ячейку целевой задачи
+  // 1. Запись во внешнюю таблицу БП (Детали поиска) - фиксируем проверку конкретной ячейки задачи
   var checkCellKey = targetCell || cell;
   logSheet.appendRow([new Date(), rowIndex, barcode, checkCellKey, foundQty, employee]);
-
-  // 2. Своевременная запись в локальный лог РАО (выполняется СРАЗУ при проверке каждой ячейки)
-  try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var raoLogSheet = getOrCreateMissingLogSheet(ss);
-    var resText = foundQty > 0 ? 'Найдено' : 'Не найдено';
-    raoLogSheet.appendRow([
-      new Date(),
-      data.employeeId   || '',
-      employee,
-      barcode,
-      '', '', '', 'Поиск БП',
-      checkCellKey,
-      cell,
-      resText,
-      1, 0, foundQty, 0,
-      'Поиск БП'
-    ]);
-  } catch (eRaoLog) {}
 
   var headers = mainSheet.getRange(1, 1, 1, mainSheet.getLastColumn()).getValues()[0];
   var colMap  = mapBpHeaders(headers);
@@ -1617,7 +1598,7 @@ function handleLogBpResult(data) {
     }
   }
 
-  // 3. Обновляем статус в главной таблице (Рабочий лист) ТОЛЬКО после проверки всех ячеек строки
+  // 2. Только после проверки ВСЕХ ячеек СКУ записываем финальный итог сотруднику в Лог РАО и обновляем Главную таблицу
   if (allChecked) {
     var todayStr = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'dd.MM.yyyy');
     var finalStatus = totalFoundQty > 0 ? 'Найден' : 'Не найден';
@@ -1626,6 +1607,24 @@ function handleLogBpResult(data) {
     if (colMap.foundQty !== -1)   mainSheet.getRange(rowIndex, colMap.foundQty + 1).setValue(totalFoundQty);
     if (colMap.employee !== -1)   mainSheet.getRange(rowIndex, colMap.employee + 1).setValue(employee);
     if (colMap.searchDate !== -1) mainSheet.getRange(rowIndex, colMap.searchDate + 1).setValue(todayStr);
+
+    // Запись 1 проверенного СКУ в локальный лог РАО сотрудника (Лог обработки - [Месяц])
+    try {
+      var ss = SpreadsheetApp.getActiveSpreadsheet();
+      var raoLogSheet = getOrCreateMissingLogSheet(ss);
+      raoLogSheet.appendRow([
+        new Date(),
+        data.employeeId   || '',
+        employee,
+        barcode,
+        '', '', '', 'Поиск БП',
+        checkCellKey,
+        cell,
+        (totalFoundQty > 0 ? 'Найдено' : 'Не найдено'),
+        1, 0, totalFoundQty, 0,
+        'Поиск БП'
+      ]);
+    } catch (eRaoLog) {}
   }
 
   return jsonOk({ success: true, allChecked: allChecked, totalFoundQty: totalFoundQty });
