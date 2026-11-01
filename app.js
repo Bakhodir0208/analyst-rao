@@ -50,6 +50,7 @@ function initUI() {
       missing:   document.getElementById('screen-missing'),
       bezshk:    document.getElementById('screen-bezshk'),
       bp:        document.getElementById('screen-bp'),
+      fbs:       document.getElementById('screen-fbs'),
     },
 
     // Inputs
@@ -64,10 +65,16 @@ function initUI() {
     btnMissing:         document.getElementById('btnMissing'),
     btnBezShk:          document.getElementById('btnBezShk'),
     btnBP:              document.getElementById('btnBP'),
+    btnFBS:             document.getElementById('btnFBS'),
     btnLogout:          document.getElementById('btnLogout'),
     btnBackFromMissing: document.getElementById('btnBackFromMissing'),
     btnBackFromBezShk:  document.getElementById('btnBackFromBezShk'),
     btnBackFromBP:      document.getElementById('btnBackFromBP'),
+    btnBackFromFBS:     document.getElementById('btnBackFromFBS'),
+    btnFbsActs:         document.getElementById('btnFbsActs'),
+    btnFbsVycherki:     document.getElementById('btnFbsVycherki'),
+    btnBackToFbsSelectFromActs:     document.getElementById('btnBackToFbsSelectFromActs'),
+    btnBackToFbsSelectFromVycherki: document.getElementById('btnBackToFbsSelectFromVycherki'),
   };
 }
 
@@ -355,6 +362,12 @@ function setupEventListeners() {
     showScreen('bp');
     initBpScreen();
   });
+  if (ui.btnFBS) {
+    ui.btnFBS.addEventListener('click', () => {
+      showScreen('fbs');
+      renderFbsSubscreen('fbs-select-view');
+    });
+  }
   ui.btnLogout.addEventListener('click',  handleLogout);
 
   // Back buttons
@@ -367,6 +380,37 @@ function setupEventListeners() {
       showScreen('dashboard');
     }
   });
+  if (ui.btnBackFromFBS) {
+    ui.btnBackFromFBS.addEventListener('click', () => {
+      if (state.fbs && (state.fbs.currentSubscreen === 'fbs-acts-view' || state.fbs.currentSubscreen === 'fbs-vycherki-view')) {
+        renderFbsSubscreen('fbs-select-view');
+      } else {
+        showScreen('dashboard');
+      }
+    });
+  }
+
+  // FBS directions listeners
+  if (ui.btnFbsActs) {
+    ui.btnFbsActs.addEventListener('click', () => {
+      renderFbsSubscreen('fbs-acts-view');
+    });
+  }
+  if (ui.btnFbsVycherki) {
+    ui.btnFbsVycherki.addEventListener('click', () => {
+      renderFbsSubscreen('fbs-vycherki-view');
+    });
+  }
+  if (ui.btnBackToFbsSelectFromActs) {
+    ui.btnBackToFbsSelectFromActs.addEventListener('click', () => {
+      renderFbsSubscreen('fbs-select-view');
+    });
+  }
+  if (ui.btnBackToFbsSelectFromVycherki) {
+    ui.btnBackToFbsSelectFromVycherki.addEventListener('click', () => {
+      renderFbsSubscreen('fbs-select-view');
+    });
+  }
 
   setupBpEventListeners();
 
@@ -1837,4 +1881,51 @@ function setupBpEventListeners() {
   if (btnConfirmOk)   btnConfirmOk.onclick   = confirmAndSubmitBpModal;
   if (btnExit)     btnExit.onclick     = exitBpZone;
   if (btnDoneBack) btnDoneBack.onclick = exitBpZone;
+}
+
+// ═══════════════════════════════════════════
+//  FBS MODULE
+// ═══════════════════════════════════════════
+function renderFbsSubscreen(subscreenId) {
+  if (!state.fbs) state.fbs = {};
+  state.fbs.currentSubscreen = subscreenId;
+  const subscreens = ['fbs-select-view', 'fbs-acts-view', 'fbs-vycherki-view'];
+  subscreens.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = (id === subscreenId) ? 'flex' : 'none';
+  });
+
+  const tagEl = document.getElementById('fbsCurrentTag');
+  if (tagEl) {
+    if (subscreenId === 'fbs-acts-view') {
+      tagEl.innerHTML = `
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+        </svg>
+        Поиск актов
+      `;
+    } else if (subscreenId === 'fbs-vycherki-view') {
+      tagEl.innerHTML = `
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
+          <rect x="8" y="2" width="8" height="4" rx="1" ry="1"/>
+          <line x1="9" y1="11" x2="15" y2="17"/>
+          <line x1="15" y1="11" x2="9" y2="17"/>
+        </svg>
+        Поиск вычерков
+      `;
+    } else {
+      tagEl.innerHTML = `
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+          <line x1="12" y1="22.08" x2="12" y2="12"/>
+        </svg>
+        Поиск FBS
+      `;
+    }
+  }
 }
