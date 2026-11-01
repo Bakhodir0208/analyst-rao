@@ -54,6 +54,14 @@ function doGet(e) {
       return handleGetBpTasks();
     }
 
+    if (action === 'getFbsActTask') {
+      return handleGetFbsActTask(e.parameter.id);
+    }
+
+    if (action === 'getFbsVycherkTask') {
+      return handleGetFbsVycherkTask(e.parameter.id);
+    }
+
     return jsonOk({ success: false, error: 'Неизвестный action: ' + action });
   } catch (err) {
     return jsonOk({ success: false, error: err.toString() });
@@ -89,6 +97,22 @@ function doPost(e) {
 
     if (data.action === 'unlockBpZone') {
       return handleUnlockBpZone(data);
+    }
+
+    if (data.action === 'logFbsActResult') {
+      return handleLogFbsActResult(data);
+    }
+
+    if (data.action === 'releaseFbsAct') {
+      return handleReleaseFbsAct(data);
+    }
+
+    if (data.action === 'logFbsVycherkResult') {
+      return handleLogFbsVycherkResult(data);
+    }
+
+    if (data.action === 'releaseFbsVycherk') {
+      return handleReleaseFbsVycherk(data);
     }
 
     return jsonOk({ success: false, error: 'Неизвестный action: ' + data.action });
@@ -1728,5 +1752,505 @@ function handleUnlockBpZone(data) {
     }
   }
 
+  return jsonOk({ success: true });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  FBS — ПОИСК АКТОВ (лист «Поиск FBS» в таблице БП)
+//  • Очередь: строки с Номером акта + ШК + «Ячейка для поиска»
+//    и пустым «Статус». Группируются по акту, порядок актов —
+//    по первой строке акта сверху вниз; внутри акта — сверху вниз.
+//  • Бронь: сотрудник получает целый акт; бронь пишется в лист
+//    «Блокировки» (Склад = FBS_ACT_LOCK_TAG, Этаж = № акта),
+//    протухает через 4 часа (cleanExpiredBpLocks).
+//  • Результат: «Найден» / «Не найден» → Статус, Найдено в ячейке,
+//    Найдено (кол-во), Сотрудник Аналитики.
+// ═══════════════════════════════════════════════════════════
+var SHEET_FBS_SEARCH  = 'Поиск FBS';
+var FBS_ACT_LOCK_TAG  = 'FBS: Поиск актов';
+var FBS_ACT_RESULTS   = ['Найден', 'Не найден'];
+
+function fbsNorm(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number') return String(Math.round(v));
+  return String(v).replace(/\s+/g, '').trim().toUpperCase();
+}
+
+function fbsText(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number') return String(Math.round(v));
+  return String(v).trim();
+}
+
+/** Колонки листа «Поиск FBS» по заголовкам (точное совпадение, затем начало строки). */
+function getFbsSearchColumns(sheet) {
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+    .map(function (h) { return String(h || '').toLowerCase().replace(/\s+/g, ' ').trim(); });
+  function find(exact, prefix) {
+    var i = headers.indexOf(exact);
+    if (i >= 0) return i;
+    if (prefix) {
+      for (var k = 0; k < headers.length; k++) if (headers[k].indexOf(prefix) === 0) return k;
+    }
+    return -1;
+  }
+  return {
+    date:      find('дата заявки', 'дата заявки'),
+    request:   find('заявка'),
+    act:       find('номер акта возврата', 'номер акта'),
+    sku:       find('шк товара', 'шк'),
+    desc:      find('описание', 'описание'),
+    qty:       find('количество для поиска', 'количество для поиска'),
+    cells:     find('ячейка для поиска', 'ячейка для поиска'),
+    foundCell: find('найдено в ячейке', 'найдено в ячейке'),
+    storage:   find('ячейка хранение акта', 'ячейка хранен'),
+    status:    find('статус'),
+    foundQty:  find('найдено'),
+    employee:  find('сотрудник аналитики', 'сотрудник')
+  };
+}
+
+function getFbsSearchSheet() {
+  var bpSs = getBpSpreadsheet();
+  if (!bpSs) return { error: 'Нет доступа к таблице «Запросы от БП | Аналитика»' };
+  var sheet = bpSs.getSheetByName(SHEET_FBS_SEARCH);
+  if (!sheet) return { error: 'Не найден лист «' + SHEET_FBS_SEARCH + '»' };
+  var cols = getFbsSearchColumns(sheet);
+  var required = ['act', 'sku', 'cells', 'status', 'foundCell', 'foundQty', 'employee'];
+  for (var i = 0; i < required.length; i++) {
+    if (cols[required[i]] < 0) return { error: 'В «' + SHEET_FBS_SEARCH + '» не найдена колонка: ' + required[i] };
+  }
+  return { bpSs: bpSs, sheet: sheet, cols: cols };
+}
+
+function fbsFormatDate(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Tashkent', 'dd.MM.yyyy HH:mm');
+  return fbsText(v);
+}
+
+/** Ячейки для поиска: в одной ячейке таблицы может быть несколько через перенос строки / запятую. */
+function fbsSplitCells(v) {
+  return fbsText(v).split(/[\n,;]+/).map(function (x) { return x.trim(); }).filter(String);
+}
+
+/** Все необработанные строки, сгруппированные по акту (в порядке листа). */
+function readFbsPendingActs(sheet, cols) {
+  var lastRow = sheet.getLastRow();
+  var acts = [];      // [{ key, act, rows: [...] }]
+  var byKey = {};
+  if (lastRow < 2) return acts;
+  var data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    var actKey = fbsNorm(r[cols.act]);
+    var sku    = fbsText(r[cols.sku]);
+    if (!actKey || !sku) continue;
+    if (fbsText(r[cols.status])) continue;                 // уже обработано
+    var cells = fbsSplitCells(r[cols.cells]);
+    if (!cells.length) continue;                           // ещё не подготовлено к поиску
+    if (!byKey[actKey]) {
+      byKey[actKey] = { key: actKey, act: fbsText(r[cols.act]), rows: [] };
+      acts.push(byKey[actKey]);
+    }
+    byKey[actKey].rows.push({
+      row:         i + 2,
+      sku:         sku,
+      desc:        cols.desc    >= 0 ? fbsText(r[cols.desc])    : '',
+      qty:         cols.qty     >= 0 ? (parseInt(r[cols.qty], 10) || 1) : 1,
+      cells:       cells,
+      storageCell: cols.storage >= 0 ? fbsText(r[cols.storage]) : '',
+      request:     cols.request >= 0 ? fbsText(r[cols.request]) : '',
+      date:        cols.date    >= 0 ? fbsFormatDate(r[cols.date]) : ''
+    });
+  }
+  return acts;
+}
+
+function getOrCreateLockSheet(bpSs) {
+  var lockSheet = bpSs.getSheetByName('Блокировки');
+  if (!lockSheet) {
+    lockSheet = bpSs.insertSheet('Блокировки');
+    lockSheet.appendRow(['Склад', 'Этаж', 'Сотрудник ФИО', 'Дата блокировки']);
+  }
+  return lockSheet;
+}
+
+/** { actKey: employeeName } — текущие брони актов FBS. */
+function readFbsActLocks(bpSs) {
+  var res = {};
+  var lockSheet = bpSs.getSheetByName('Блокировки');
+  if (!lockSheet) return res;
+  var data = lockSheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0] || '').trim() !== FBS_ACT_LOCK_TAG) continue;
+    res[fbsNorm(data[i][1])] = String(data[i][2] || '').trim();
+  }
+  return res;
+}
+
+/** Снимает все брони актов сотрудника и (если actText задан) ставит новую / обновляет время. */
+function setFbsActLock(bpSs, employeeName, actText) {
+  var lockSheet = getOrCreateLockSheet(bpSs);
+  var data = lockSheet.getDataRange().getValues();
+  var header = ['Склад', 'Этаж', 'Сотрудник ФИО', 'Дата блокировки'];
+  if (!data.length || data[0].length < 4 || !String(data[0][0] || '').trim()) data = [header];
+  var keep = [data[0].slice(0, 4)];
+  for (var i = 1; i < data.length; i++) {
+    var isMine = String(data[i][0] || '').trim() === FBS_ACT_LOCK_TAG &&
+                 isEmployeeMatch(data[i][2], employeeName);
+    if (!isMine) keep.push(data[i].slice(0, 4));
+  }
+  if (actText) keep.push([FBS_ACT_LOCK_TAG, actText, employeeName, new Date()]);
+  lockSheet.clearContents();
+  lockSheet.getRange(1, 1, keep.length, keep[0].length).setValues(keep);
+}
+
+/**
+ * GET getFbsActTask&id=...
+ * Возвращает акт сотрудника (уже забронированный или следующий свободный) со списком позиций.
+ */
+function handleGetFbsActTask(employeeId) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var employeeName = getEmployeeNameById(ss, employeeId);
+  if (!employeeName) return jsonOk({ success: false, error: 'Сотрудник не найден' });
+
+  var ctx = getFbsSearchSheet();
+  if (ctx.error) return jsonOk({ success: false, error: ctx.error });
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return jsonOk({ success: false, error: 'Сервер занят, попробуйте ещё раз' });
+  try {
+    cleanExpiredBpLocks(ctx.bpSs);
+    var acts  = readFbsPendingActs(ctx.sheet, ctx.cols);
+    var locks = readFbsActLocks(ctx.bpSs);
+
+    var mine = null, free = [], lockedByOthers = 0;
+    for (var i = 0; i < acts.length; i++) {
+      var owner = locks[acts[i].key];
+      if (owner && isEmployeeMatch(owner, employeeName)) { if (!mine) mine = acts[i]; }
+      else if (owner) lockedByOthers++;
+      else free.push(acts[i]);
+    }
+
+    var current = mine || free.shift() || null;
+    if (!current) {
+      setFbsActLock(ctx.bpSs, employeeName, null);
+      return jsonOk({ success: true, act: null, lockedByOthers: lockedByOthers });
+    }
+
+    setFbsActLock(ctx.bpSs, employeeName, current.act);
+    return jsonOk({
+      success:        true,
+      act:            current.act,
+      rows:           current.rows,
+      actsLeft:       free.length,       // свободных актов после текущего
+      lockedByOthers: lockedByOthers
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * POST logFbsActResult
+ * { employeeId, act, sku, row, result: 'Найден'|'Не найден', foundCell, foundQty }
+ */
+function handleLogFbsActResult(data) {
+  var result = String(data.result || '').trim();
+  if (FBS_ACT_RESULTS.indexOf(result) < 0) return jsonOk({ success: false, error: 'Неизвестный результат: ' + result });
+  if (!data.act || !data.sku) return jsonOk({ success: false, error: 'Неполные данные' });
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var employeeName = getEmployeeNameById(ss, data.employeeId);
+  if (!employeeName) return jsonOk({ success: false, error: 'Сотрудник не найден' });
+
+  var isFound   = result === 'Найден';
+  var foundCell = String(data.foundCell || '').trim();
+  var foundQty  = parseInt(data.foundQty, 10) || 0;
+  if (isFound && (!foundCell || foundQty < 1)) {
+    return jsonOk({ success: false, error: 'Укажите ячейку и количество' });
+  }
+
+  var ctx = getFbsSearchSheet();
+  if (ctx.error) return jsonOk({ success: false, error: ctx.error });
+  var sheet = ctx.sheet, cols = ctx.cols;
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return jsonOk({ success: false, error: 'Сервер занят, попробуйте ещё раз' });
+  try {
+    var actKey = fbsNorm(data.act), skuKey = fbsNorm(data.sku);
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    var all = sheet.getRange(2, 1, Math.max(lastRow - 1, 1), lastCol).getValues();
+
+    function matches(r) {
+      return r && fbsNorm(r[cols.act]) === actKey && fbsNorm(r[cols.sku]) === skuKey;
+    }
+
+    // Строка по номеру; если строки сдвинулись — ищем первую необработанную с тем же Акт+ШК
+    var rowNum = parseInt(data.row, 10) || 0;
+    var r = rowNum >= 2 ? all[rowNum - 2] : null;
+    if (!matches(r) || fbsText(r[cols.status])) {
+      rowNum = 0;
+      for (var i = 0; i < all.length; i++) {
+        if (matches(all[i]) && !fbsText(all[i][cols.status])) { rowNum = i + 2; break; }
+      }
+      if (!rowNum) return jsonOk({ success: false, error: 'Позиция уже обработана или удалена', alreadyDone: true });
+    }
+
+    sheet.getRange(rowNum, cols.status   + 1).setValue(result);
+    sheet.getRange(rowNum, cols.foundCell + 1).setValue(isFound ? foundCell : '');
+    sheet.getRange(rowNum, cols.foundQty + 1).setValue(isFound ? foundQty : 0);
+    sheet.getRange(rowNum, cols.employee + 1).setValue(employeeName);
+    all[rowNum - 2][cols.status] = result;
+
+    // Остались ли в акте необработанные строки?
+    var actLeft = 0;
+    for (var j = 0; j < all.length; j++) {
+      if (fbsNorm(all[j][cols.act]) === actKey && !fbsText(all[j][cols.status]) &&
+          fbsSplitCells(all[j][cols.cells]).length) actLeft++;
+    }
+    setFbsActLock(ctx.bpSs, employeeName, actLeft ? fbsText(data.act) : null);
+
+    return jsonOk({ success: true, actLeft: actLeft });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** POST releaseFbsAct { employeeId } — снять бронь при выходе из экрана. */
+function handleReleaseFbsAct(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var employeeName = getEmployeeNameById(ss, data.employeeId);
+  if (!employeeName) return jsonOk({ success: true });
+  var bpSs = getBpSpreadsheet();
+  if (!bpSs) return jsonOk({ success: true });
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return jsonOk({ success: false, error: 'Сервер занят' });
+  try {
+    setFbsActLock(bpSs, employeeName, null);
+  } finally {
+    lock.releaseLock();
+  }
+  return jsonOk({ success: true });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  FBS — ПОИСК ВЫЧЕРКОВ (лист «Поиск FBS» в этой KPI-таблице)
+//  Данные кладёт Python-скрипт каждое утро (fbs_vycherki_export.py).
+//  • Очередь: строки с ШК и пустым «Статус», сортировка по «Сумма»
+//    по убыванию (при равенстве — раньше вычеркнутые первыми).
+//  • Бронь: одна позиция на сотрудника, в CacheService на 30 минут
+//    (продлевается при каждом запросе). Брони по содержимому строки,
+//    поэтому переживают утреннюю перезапись листа.
+//  • Результат: «Найден» (+ ячейка) / «Не найден» →
+//    Статус, Ячейка где найдено, Сотрудник Аналитики, Дата и время поиска.
+// ═══════════════════════════════════════════════════════════
+var SHEET_FBS_VYCH     = 'Поиск FBS';
+var FBS_VYCH_RESULTS   = ['Найден', 'Не найден'];
+var FBS_VYCH_LOCK_SEC  = 30 * 60;
+
+function getFbsVychColumns(sheet) {
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+    .map(function (h) { return String(h || '').toLowerCase().replace(/\s+/g, ' ').trim(); });
+  function find(exact, prefix) {
+    var i = headers.indexOf(exact);
+    if (i >= 0) return i;
+    if (prefix) for (var k = 0; k < headers.length; k++) if (headers[k].indexOf(prefix) === 0) return k;
+    return -1;
+  }
+  return {
+    date:      find('дата вычерка', 'дата вычерка'),
+    sku:       find('шк товара', 'шк товара'),
+    desc:      find('описание'),
+    category:  find('категория 1', 'категория'),
+    cell:      find('ячейка'),
+    qty:       find('товаров'),
+    price:     find('цена продажи', 'цена'),
+    sum:       find('сумма'),
+    worker:    find('работник'),
+    status:    find('статус'),
+    foundCell: find('ячейка где найдено', 'ячейка где'),
+    foundQty:  find('найдено'),
+    employee:  find('сотрудник аналитики', 'сотрудник'),
+    searchAt:  find('дата и время поиска', 'дата и время')
+  };
+}
+
+function getFbsVychSheet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_FBS_VYCH);
+  if (!sheet) return { error: 'Не найден лист «' + SHEET_FBS_VYCH + '»' };
+  if (sheet.getLastRow() < 1) return { error: 'Лист «' + SHEET_FBS_VYCH + '» пуст' };
+  var cols = getFbsVychColumns(sheet);
+  var required = { sku: 'ШК товара', status: 'Статус', foundCell: 'Ячейка где найдено', foundQty: 'Найдено',
+                   employee: 'Сотрудник Аналитики', searchAt: 'Дата и время поиска' };
+  for (var k in required) {
+    if (cols[k] < 0) return { error: 'В «' + SHEET_FBS_VYCH + '» нет колонки «' + required[k] + '»' };
+  }
+  return { ss: ss, sheet: sheet, cols: cols };
+}
+
+function fbsNum(v) {
+  if (typeof v === 'number') return v;
+  var n = parseFloat(String(v || '').replace(/\s/g, '').replace(',', '.'));
+  return isNaN(n) ? 0 : n;
+}
+
+/** Ключ позиции: дата + ШК + ячейка + работник (как в Python-выгрузке). */
+function fbsVychKey(r, cols) {
+  function part(i) { return i >= 0 ? fbsNorm(r[i] instanceof Date ? fbsFormatDate(r[i]) : r[i]) : ''; }
+  return [part(cols.date), part(cols.sku), part(cols.cell), part(cols.worker)].join('|');
+}
+
+function fbsVychTask(r, cols, rowNum, key) {
+  function g(i) { return i >= 0 ? r[i] : ''; }
+  return {
+    row:      rowNum,
+    key:      key,
+    date:     g(cols.date) instanceof Date ? fbsFormatDate(g(cols.date)) : fbsText(g(cols.date)),
+    sku:      fbsText(g(cols.sku)),
+    desc:     fbsText(g(cols.desc)),
+    category: fbsText(g(cols.category)),
+    cell:     fbsText(g(cols.cell)),
+    qty:      parseInt(g(cols.qty), 10) || 1,
+    price:    fbsNum(g(cols.price)),
+    sum:      fbsNum(g(cols.sum)),
+    worker:   fbsText(g(cols.worker))
+  };
+}
+
+/**
+ * GET getFbsVycherkTask&id=...
+ * Возвращает одну позицию (уже забронированную сотрудником или самую дорогую свободную).
+ */
+function handleGetFbsVycherkTask(employeeId) {
+  var ctx = getFbsVychSheet();
+  if (ctx.error) return jsonOk({ success: false, error: ctx.error });
+  var employeeName = getEmployeeNameById(ctx.ss, employeeId);
+  if (!employeeName) return jsonOk({ success: false, error: 'Сотрудник не найден' });
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return jsonOk({ success: false, error: 'Сервер занят, попробуйте ещё раз' });
+  try {
+    var sheet = ctx.sheet, cols = ctx.cols;
+    var lastRow = sheet.getLastRow();
+    var data = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues() : [];
+
+    var pending = [];
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      if (!fbsText(r[cols.sku]) || fbsText(r[cols.status])) continue;
+      pending.push({ i: i, key: fbsVychKey(r, cols), sum: cols.sum >= 0 ? fbsNum(r[cols.sum]) : 0 });
+    }
+    // Дорогие первыми; при равной сумме — по порядку в листе (раньше вычеркнутые)
+    pending.sort(function (a, b) { return (b.sum - a.sum) || (a.i - b.i); });
+
+    var cache   = CacheService.getScriptCache();
+    var empKey  = 'VYCH_EMP_' + fbsNorm(employeeName);
+    var myKey   = cache.get(empKey);
+    var locks   = pending.length ? cache.getAll(pending.map(function (p) { return 'VYCH_LOCK_' + p.key; })) : {};
+
+    var chosen = null, lockedByOthers = 0, free = 0;
+    for (var k = 0; k < pending.length; k++) {
+      var owner = locks['VYCH_LOCK_' + pending[k].key];
+      var mine  = (myKey && myKey === pending[k].key) || (owner && isEmployeeMatch(owner, employeeName));
+      if (mine && !chosen) { chosen = pending[k]; continue; }
+      if (owner && !mine) { lockedByOthers++; continue; }
+      free++;
+    }
+    if (!chosen) {
+      for (var m = 0; m < pending.length; m++) {
+        if (!locks['VYCH_LOCK_' + pending[m].key]) { chosen = pending[m]; free--; break; }
+      }
+    }
+
+    if (!chosen) {
+      cache.remove(empKey);
+      return jsonOk({ success: true, task: null, lockedByOthers: lockedByOthers });
+    }
+
+    cache.put('VYCH_LOCK_' + chosen.key, employeeName, FBS_VYCH_LOCK_SEC);
+    cache.put(empKey, chosen.key, FBS_VYCH_LOCK_SEC);
+
+    return jsonOk({
+      success:        true,
+      task:           fbsVychTask(data[chosen.i], cols, chosen.i + 2, chosen.key),
+      left:           Math.max(free, 0),      // свободных позиций, кроме текущей
+      lockedByOthers: lockedByOthers
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * POST logFbsVycherkResult
+ * { employeeId, key, row, result: 'Найден'|'Не найден', foundCell, foundQty }
+ */
+function handleLogFbsVycherkResult(data) {
+  var result = String(data.result || '').trim();
+  if (FBS_VYCH_RESULTS.indexOf(result) < 0) return jsonOk({ success: false, error: 'Неизвестный результат: ' + result });
+  if (!data.key) return jsonOk({ success: false, error: 'Неполные данные' });
+  var isFound   = result === 'Найден';
+  var foundCell = String(data.foundCell || '').trim();
+  var foundQty  = parseInt(data.foundQty, 10) || 0;
+  if (isFound && !foundCell) return jsonOk({ success: false, error: 'Укажите ячейку, где нашли товар' });
+  if (isFound && foundQty < 1) return jsonOk({ success: false, error: 'Укажите найденное количество' });
+
+  var ctx = getFbsVychSheet();
+  if (ctx.error) return jsonOk({ success: false, error: ctx.error });
+  var employeeName = getEmployeeNameById(ctx.ss, data.employeeId);
+  if (!employeeName) return jsonOk({ success: false, error: 'Сотрудник не найден' });
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return jsonOk({ success: false, error: 'Сервер занят, попробуйте ещё раз' });
+  try {
+    var sheet = ctx.sheet, cols = ctx.cols;
+    var lastRow = sheet.getLastRow();
+    var data2 = lastRow >= 2 ? sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues() : [];
+
+    // Строка по номеру; если лист перезаписан — ищем по ключу
+    var rowNum = parseInt(data.row, 10) || 0;
+    var r = rowNum >= 2 ? data2[rowNum - 2] : null;
+    if (!r || fbsVychKey(r, cols) !== data.key) {
+      rowNum = 0;
+      for (var i = 0; i < data2.length; i++) {
+        if (fbsVychKey(data2[i], cols) === data.key) { rowNum = i + 2; r = data2[i]; break; }
+      }
+    }
+    if (!rowNum) return jsonOk({ success: false, error: 'Позиция не найдена (лист обновился)', alreadyDone: true });
+    if (fbsText(r[cols.status])) return jsonOk({ success: false, error: 'Позиция уже обработана', alreadyDone: true });
+    var maxQty = cols.qty >= 0 ? (parseInt(r[cols.qty], 10) || 1) : foundQty;
+    if (isFound && foundQty > maxQty) return jsonOk({ success: false, error: 'Найдено больше, чем вычеркнуто (' + maxQty + ')' });
+
+    sheet.getRange(rowNum, cols.status    + 1).setValue(result);
+    sheet.getRange(rowNum, cols.foundCell + 1).setNumberFormat('@').setValue(isFound ? foundCell : '');
+    sheet.getRange(rowNum, cols.foundQty  + 1).setValue(isFound ? foundQty : 0);
+    sheet.getRange(rowNum, cols.employee  + 1).setValue(employeeName);
+    sheet.getRange(rowNum, cols.searchAt  + 1).setNumberFormat('dd.MM.yyyy HH:mm:ss').setValue(new Date());
+
+    var cache = CacheService.getScriptCache();
+    cache.remove('VYCH_LOCK_' + data.key);
+    cache.remove('VYCH_EMP_' + fbsNorm(employeeName));
+
+    return jsonOk({ success: true });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** POST releaseFbsVycherk { employeeId } — снять бронь при выходе. */
+function handleReleaseFbsVycherk(data) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var employeeName = getEmployeeNameById(ss, data.employeeId);
+  if (!employeeName) return jsonOk({ success: true });
+  var cache  = CacheService.getScriptCache();
+  var empKey = 'VYCH_EMP_' + fbsNorm(employeeName);
+  var myKey  = cache.get(empKey);
+  if (myKey) cache.remove('VYCH_LOCK_' + myKey);
+  cache.remove(empKey);
   return jsonOk({ success: true });
 }

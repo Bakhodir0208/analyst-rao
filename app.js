@@ -176,6 +176,8 @@ async function handleLogin() {
 }
 
 function handleLogout() {
+  releaseFbsAct();
+  releaseFbsVycherk();
   state.employeeId   = '';
   state.employeeName = '';
   localStorage.removeItem('rao_employee_id');
@@ -184,11 +186,15 @@ function handleLogout() {
   ui.employeeIdInput.value = '';
   ui.welcomeChip.style.display = 'none';
   ui.welcomeChip.textContent = '';
+  const header = document.getElementById('appHeader');
+  if (header) header.classList.remove('is-auth');
 
   showScreen('login');
 }
 
 function updateWelcomeChip() {
+  const header = document.getElementById('appHeader');
+  if (header) header.classList.toggle('is-auth', !!state.employeeName);
   if (state.employeeName) {
     ui.welcomeChip.textContent = state.employeeName;
     ui.welcomeChip.style.display = 'block';
@@ -383,6 +389,8 @@ function setupEventListeners() {
   if (ui.btnBackFromFBS) {
     ui.btnBackFromFBS.addEventListener('click', () => {
       if (state.fbs && (state.fbs.currentSubscreen === 'fbs-acts-view' || state.fbs.currentSubscreen === 'fbs-vycherki-view')) {
+        if (state.fbs.currentSubscreen === 'fbs-acts-view') releaseFbsAct();
+        if (state.fbs.currentSubscreen === 'fbs-vycherki-view') releaseFbsVycherk();
         renderFbsSubscreen('fbs-select-view');
       } else {
         showScreen('dashboard');
@@ -394,11 +402,13 @@ function setupEventListeners() {
   if (ui.btnFbsActs) {
     ui.btnFbsActs.addEventListener('click', () => {
       renderFbsSubscreen('fbs-acts-view');
+      initFbsActsScreen();
     });
   }
   if (ui.btnFbsVycherki) {
     ui.btnFbsVycherki.addEventListener('click', () => {
       renderFbsSubscreen('fbs-vycherki-view');
+      initFbsVycherkiScreen();
     });
   }
   if (ui.btnBackToFbsSelectFromActs) {
@@ -413,6 +423,8 @@ function setupEventListeners() {
   }
 
   setupBpEventListeners();
+  setupFbsActsEventListeners();
+  setupFbsVycherkiEventListeners();
 
   // Missing module
   document.getElementById('btnMissingRefresh').addEventListener('click', initMissingScreen);
@@ -1928,4 +1940,455 @@ function renderFbsSubscreen(subscreenId) {
       `;
     }
   }
+}
+
+
+// ═══════════════════════════════════════════
+//  FBS — ПОИСК АКТОВ
+//  Сервер выдаёт сотруднику один акт (бронь), внутри — позиции
+//  в порядке листа сверху вниз. После последней позиции акта
+//  автоматически подгружается следующий свободный акт.
+// ═══════════════════════════════════════════
+function fbsActsState() {
+  if (!state.fbs) state.fbs = {};
+  if (!state.fbs.acts) state.fbs.acts = { act: null, rows: [], total: 0, done: 0, actsLeft: 0, pending: null, busy: false };
+  return state.fbs.acts;
+}
+
+function setFbsActsState(name, message) {
+  ['loading', 'empty', 'error', 'task'].forEach(s => {
+    const el = document.getElementById('fbsacts-' + s);
+    if (el) el.style.display = 'none';
+  });
+  const el = document.getElementById('fbsacts-' + name);
+  if (el) el.style.display = 'flex';
+  if (name === 'error' && message) {
+    const msg = document.getElementById('fbsacts-error-msg');
+    if (msg) msg.textContent = message;
+  }
+}
+
+async function initFbsActsScreen() {
+  const st = fbsActsState();
+  setFbsActsState('loading');
+  fetchPlanPercent();
+  try {
+    const res = await apiGet({ action: 'getFbsActTask', id: state.employeeId });
+    if (!res.success) {
+      setFbsActsState('error', res.error || 'Ошибка получения акта');
+      return;
+    }
+    if (!res.act) {
+      st.act = null; st.rows = [];
+      const desc = document.getElementById('fbsacts-empty-desc');
+      if (desc) {
+        desc.innerHTML = res.lockedByOthers
+          ? `Свободных актов нет.<br>В работе у других сотрудников: <b>${res.lockedByOthers}</b>.`
+          : 'Все акты обработаны или ещё не подготовлены к поиску.';
+      }
+      setFbsActsState('empty');
+      return;
+    }
+    st.act      = res.act;
+    st.rows     = res.rows || [];
+    st.total    = st.rows.length;
+    st.done     = 0;
+    st.actsLeft = res.actsLeft || 0;
+    setFbsActsState('task');
+    renderFbsActTask();
+  } catch (err) {
+    console.error('[FBS acts] load error:', err);
+    setFbsActsState('error', 'Ошибка подключения к серверу');
+  }
+}
+
+function makeCopyChip(text) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'copy-btn monospace';
+  btn.title = 'Нажмите для копирования';
+  const span = document.createElement('span');
+  span.className = 'copy-val';
+  span.textContent = text;
+  btn.appendChild(span);
+  btn.insertAdjacentHTML('beforeend',
+    '<svg class="copy-icon-svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>');
+  btn.addEventListener('click', () => copyText(text, btn));
+  return btn;
+}
+
+function renderFbsActTask() {
+  const st  = fbsActsState();
+  const row = st.rows[0];
+  if (!row) return;
+
+  const card = document.getElementById('fbsacts-card-view');
+  if (card) {
+    card.classList.remove('card-refresh-flash');
+    void card.offsetHeight;
+    card.classList.add('card-refresh-flash');
+  }
+
+  // Акт
+  document.getElementById('fbsacts-act-text').textContent = st.act || '—';
+  document.getElementById('fbsacts-act').classList.remove('copied');
+  const left = document.getElementById('fbsacts-acts-left');
+  if (left) left.textContent = st.actsLeft ? `В очереди ещё актов: ${st.actsLeft}` : 'Последний акт в очереди';
+
+  // Прогресс внутри акта
+  const num = st.done + 1;
+  const pct = st.total ? Math.round((st.done / st.total) * 100) : 0;
+  document.getElementById('fbsacts-progress-text').textContent = `Позиция ${num} из ${st.total}`;
+  document.getElementById('fbsacts-progress-pct').textContent  = pct + '%';
+  document.getElementById('fbsacts-progress-bar').style.width  = pct + '%';
+
+  // Описание (пока может быть пустым — будет подтягиваться скриптом)
+  const descEl = document.getElementById('fbsacts-desc');
+  if (row.desc) {
+    descEl.textContent = row.desc;
+    descEl.classList.remove('task-name-muted');
+  } else {
+    descEl.textContent = 'Описание товара появится позже';
+    descEl.classList.add('task-name-muted');
+  }
+
+  // ШК + WMS
+  const sku = String(row.sku || '');
+  document.getElementById('fbsacts-sku-text').textContent = sku || '—';
+  document.getElementById('fbsacts-sku').classList.remove('copied');
+  const wms = document.getElementById('fbsacts-wms-link');
+  if (wms) wms.href = sku ? `https://wms.uzum.uz/information/product/${encodeURIComponent(sku)}` : '#';
+
+  // Ячейки поиска — каждая отдельной копируемой «таблеткой»
+  const cellsEl = document.getElementById('fbsacts-cells');
+  cellsEl.innerHTML = '';
+  (row.cells || []).forEach(c => cellsEl.appendChild(makeCopyChip(c)));
+  if (!cellsEl.children.length) cellsEl.textContent = '—';
+
+  document.getElementById('fbsacts-qty').textContent     = (row.qty || 1) + ' шт.';
+  document.getElementById('fbsacts-storage').textContent = row.storageCell || '—';
+  document.getElementById('fbsacts-date').textContent    = row.date || '—';
+  const reqRow = document.getElementById('fbsacts-request-row');
+  if (reqRow) reqRow.style.display = row.request ? '' : 'none';
+  document.getElementById('fbsacts-request').textContent = row.request || '—';
+}
+
+function showFbsActConfirm(result) {
+  const st  = fbsActsState();
+  const row = st.rows[0];
+  if (!row || st.busy) return;
+  st.pending = result;
+
+  const isFound = result === 'Найден';
+  document.getElementById('fbsActConfirmTitle').textContent = isFound
+    ? 'Подтвердите данные найденного товара:'
+    : 'Отметить товар как не найденный?';
+  document.getElementById('fbsActConfirmLabel').textContent = isFound ? '✅ Найден' : '❌ Не найден';
+
+  const wrap = document.getElementById('fbsActFoundWrap');
+  wrap.style.display = isFound ? 'block' : 'none';
+  if (isFound) {
+    const max = parseInt(row.qty, 10) || 1;
+    const qty = document.getElementById('fbsActFoundQty');
+    qty.value = max;
+    qty.max   = max;
+    document.getElementById('fbsActQtyMax').textContent = max;
+    const cell = document.getElementById('fbsActFoundCell');
+    cell.value = '';
+    setTimeout(() => cell.focus(), 150);
+  }
+  document.getElementById('fbsActConfirmOverlay').style.display = 'flex';
+}
+
+function hideFbsActConfirm() {
+  fbsActsState().pending = null;
+  document.getElementById('fbsActConfirmOverlay').style.display = 'none';
+}
+
+async function submitFbsActResult() {
+  const st     = fbsActsState();
+  const row    = st.rows[0];
+  const result = st.pending;
+  if (!row || !result || st.busy) return;
+
+  const isFound = result === 'Найден';
+  let foundCell = '', foundQty = 0;
+  if (isFound) {
+    const cellEl = document.getElementById('fbsActFoundCell');
+    const qtyEl  = document.getElementById('fbsActFoundQty');
+    foundCell = cellEl.value.trim();
+    foundQty  = parseInt(qtyEl.value, 10) || 0;
+    const max = parseInt(row.qty, 10) || 1;
+    if (!foundCell) { highlightInvalidInput(cellEl); showError('Укажите ячейку, где нашли товар'); return; }
+    if (foundQty < 1 || foundQty > max) { highlightInvalidInput(qtyEl); showError(`Количество от 1 до ${max}`); return; }
+  }
+
+  st.busy = true;
+  showLoader('Сохранение...');
+  try {
+    const res = await apiPost({
+      action:     'logFbsActResult',
+      employeeId: state.employeeId,
+      act:        st.act,
+      sku:        row.sku,
+      row:        row.row,
+      result,
+      foundCell,
+      foundQty
+    });
+
+    if (!res.success && !res.alreadyDone) {
+      showError(res.error || 'Ошибка сохранения');
+      return;
+    }
+
+    hideFbsActConfirm();
+    if (res.alreadyDone) showError('Позиция уже обработана другим сотрудником');
+    else showSuccess(isFound ? 'Найден — записано' : 'Не найден — записано');
+
+    st.rows.shift();
+    st.done++;
+
+    if (st.rows.length) {
+      renderFbsActTask();
+    } else {
+      showSuccess(`Акт ${st.act} закрыт`);
+      await initFbsActsScreen();   // следующий свободный акт
+    }
+  } catch (err) {
+    console.error('[FBS acts] submit error:', err);
+    showError('Ошибка подключения к серверу');
+  } finally {
+    st.busy = false;
+    hideLoader();
+  }
+}
+
+function releaseFbsAct() {
+  const st = fbsActsState();
+  if (!st.act || !state.employeeId) return;
+  st.act = null;
+  st.rows = [];
+  apiPost({ action: 'releaseFbsAct', employeeId: state.employeeId }).catch(() => {});
+}
+
+function setupFbsActsEventListeners() {
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+
+  on('fbsActFound',    () => showFbsActConfirm('Найден'));
+  on('fbsActNotFound', () => showFbsActConfirm('Не найден'));
+  on('btnFbsActCancel',    hideFbsActConfirm);
+  on('btnFbsActConfirmOk', submitFbsActResult);
+  on('btnFbsActsRefresh',  initFbsActsScreen);
+  on('btnFbsActsRetry',    initFbsActsScreen);
+
+  on('fbsacts-act', function () { copyText(fbsActsState().act, this); });
+  on('fbsacts-sku', function () { copyText((fbsActsState().rows[0] || {}).sku, this); });
+
+  const qtyEl = document.getElementById('fbsActFoundQty');
+  const step = d => {
+    const max = parseInt(qtyEl.max, 10) || 1;
+    qtyEl.value = Math.min(max, Math.max(1, (parseInt(qtyEl.value, 10) || 1) + d));
+  };
+  on('btnFbsActQtyMinus', () => step(-1));
+  on('btnFbsActQtyPlus',  () => step(1));
+
+  const overlay = document.getElementById('fbsActConfirmOverlay');
+  if (overlay) overlay.addEventListener('click', e => { if (e.target === overlay) hideFbsActConfirm(); });
+
+  const cellEl = document.getElementById('fbsActFoundCell');
+  if (cellEl) cellEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submitFbsActResult(); } });
+}
+
+
+// ═══════════════════════════════════════════
+//  FBS — ПОИСК ВЫЧЕРКОВ
+//  Сервер выдаёт одну позицию (бронь), самые дорогие по сумме — первыми.
+// ═══════════════════════════════════════════
+function fbsVychState() {
+  if (!state.fbs) state.fbs = {};
+  if (!state.fbs.vych) state.fbs.vych = { task: null, left: 0, pending: null, busy: false };
+  return state.fbs.vych;
+}
+
+function setFbsVychState(name, message) {
+  ['loading', 'empty', 'error', 'task'].forEach(s => {
+    const el = document.getElementById('fbsvych-' + s);
+    if (el) el.style.display = 'none';
+  });
+  const el = document.getElementById('fbsvych-' + name);
+  if (el) el.style.display = 'flex';
+  if (name === 'error' && message) {
+    const msg = document.getElementById('fbsvych-error-msg');
+    if (msg) msg.textContent = message;
+  }
+}
+
+async function initFbsVycherkiScreen() {
+  const st = fbsVychState();
+  setFbsVychState('loading');
+  fetchPlanPercent();
+  try {
+    const res = await apiGet({ action: 'getFbsVycherkTask', id: state.employeeId });
+    if (!res.success) {
+      setFbsVychState('error', res.error || 'Ошибка получения позиции');
+      return;
+    }
+    if (!res.task) {
+      st.task = null;
+      const desc = document.getElementById('fbsvych-empty-desc');
+      if (desc) {
+        desc.innerHTML = res.lockedByOthers
+          ? `Свободных позиций нет.<br>В работе у других сотрудников: <b>${res.lockedByOthers}</b>.`
+          : 'Все позиции обработаны. Новые придут утром.';
+      }
+      setFbsVychState('empty');
+      return;
+    }
+    st.task = res.task;
+    st.left = res.left || 0;
+    setFbsVychState('task');
+    renderFbsVychTask();
+  } catch (err) {
+    console.error('[FBS vych] load error:', err);
+    setFbsVychState('error', 'Ошибка подключения к серверу');
+  }
+}
+
+function renderFbsVychTask() {
+  const st = fbsVychState();
+  const t  = st.task;
+  if (!t) return;
+
+  const card = document.getElementById('fbsvych-card-view');
+  if (card) {
+    card.classList.remove('card-refresh-flash');
+    void card.offsetHeight;
+    card.classList.add('card-refresh-flash');
+  }
+
+  document.getElementById('fbsvych-left').textContent = st.left ? `В очереди ещё: ${st.left}` : 'Последняя позиция';
+  document.getElementById('fbsvych-sum').textContent  = formatSum(t.sum);
+
+  document.getElementById('fbsvych-desc').textContent = t.desc || '—';
+
+  const sku = String(t.sku || '');
+  document.getElementById('fbsvych-sku-text').textContent = sku || '—';
+  const wms = document.getElementById('fbsvych-wms-link');
+  if (wms) wms.href = sku ? `https://wms.uzum.uz/information/product/${encodeURIComponent(sku)}` : '#';
+
+  document.getElementById('fbsvych-cell-text').textContent = t.cell || '—';
+  ['fbsvych-sku', 'fbsvych-cell'].forEach(id => document.getElementById(id).classList.remove('copied'));
+
+  document.getElementById('fbsvych-category').textContent = t.category || '—';
+  document.getElementById('fbsvych-qty').textContent      = (t.qty || 1) + ' шт.';
+  document.getElementById('fbsvych-price').textContent    = formatSum(t.price);
+  document.getElementById('fbsvych-date').textContent     = t.date || '—';
+}
+
+function showFbsVychConfirm(result) {
+  const st = fbsVychState();
+  if (!st.task || st.busy) return;
+  st.pending = result;
+  const isFound = result === 'Найден';
+  document.getElementById('fbsVychConfirmTitle').textContent = isFound
+    ? 'Где нашли товар?'
+    : 'Отметить товар как не найденный?';
+  document.getElementById('fbsVychConfirmLabel').textContent = isFound ? '✅ Найден' : '❌ Не найден';
+  document.getElementById('fbsVychFoundWrap').style.display = isFound ? 'block' : 'none';
+  if (isFound) {
+    const max = parseInt(st.task.qty, 10) || 1;
+    const qty = document.getElementById('fbsVychFoundQty');
+    qty.value = max;
+    qty.max   = max;
+    document.getElementById('fbsVychQtyMax').textContent = max;
+    const cell = document.getElementById('fbsVychFoundCell');
+    cell.value = '';
+    setTimeout(() => cell.focus(), 150);
+  }
+  document.getElementById('fbsVychConfirmOverlay').style.display = 'flex';
+}
+
+function hideFbsVychConfirm() {
+  fbsVychState().pending = null;
+  document.getElementById('fbsVychConfirmOverlay').style.display = 'none';
+}
+
+async function submitFbsVychResult() {
+  const st = fbsVychState();
+  const t = st.task, result = st.pending;
+  if (!t || !result || st.busy) return;
+
+  const isFound = result === 'Найден';
+  let foundCell = '', foundQty = 0;
+  if (isFound) {
+    const cellEl = document.getElementById('fbsVychFoundCell');
+    const qtyEl  = document.getElementById('fbsVychFoundQty');
+    const max    = parseInt(t.qty, 10) || 1;
+    foundCell = cellEl.value.trim();
+    foundQty  = parseInt(qtyEl.value, 10) || 0;
+    if (!foundCell) { highlightInvalidInput(cellEl); showError('Укажите ячейку, где нашли товар'); return; }
+    if (foundQty < 1 || foundQty > max) { highlightInvalidInput(qtyEl); showError(`Количество от 1 до ${max}`); return; }
+  }
+
+  st.busy = true;
+  showLoader('Сохранение...');
+  try {
+    const res = await apiPost({
+      action: 'logFbsVycherkResult',
+      employeeId: state.employeeId,
+      key: t.key,
+      row: t.row,
+      result,
+      foundCell,
+      foundQty
+    });
+    if (!res.success && !res.alreadyDone) {
+      showError(res.error || 'Ошибка сохранения');
+      return;
+    }
+    hideFbsVychConfirm();
+    if (res.alreadyDone) showError(res.error || 'Позиция уже обработана');
+    else showSuccess(isFound ? 'Найден — записано' : 'Не найден — записано');
+    st.task = null;
+    await initFbsVycherkiScreen();     // следующая позиция
+  } catch (err) {
+    console.error('[FBS vych] submit error:', err);
+    showError('Ошибка подключения к серверу');
+  } finally {
+    st.busy = false;
+    hideLoader();
+  }
+}
+
+function releaseFbsVycherk() {
+  const st = fbsVychState();
+  if (!st.task || !state.employeeId) return;
+  st.task = null;
+  apiPost({ action: 'releaseFbsVycherk', employeeId: state.employeeId }).catch(() => {});
+}
+
+function setupFbsVycherkiEventListeners() {
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+  on('fbsVychFound',        () => showFbsVychConfirm('Найден'));
+  on('fbsVychNotFound',     () => showFbsVychConfirm('Не найден'));
+  on('btnFbsVychCancel',    hideFbsVychConfirm);
+  on('btnFbsVychConfirmOk', submitFbsVychResult);
+  on('btnFbsVychRefresh',   initFbsVycherkiScreen);
+  on('btnFbsVychRetry',     initFbsVycherkiScreen);
+  on('fbsvych-sku',  function () { copyText((fbsVychState().task || {}).sku, this); });
+  on('fbsvych-cell', function () { copyText((fbsVychState().task || {}).cell, this); });
+
+  const qtyEl = document.getElementById('fbsVychFoundQty');
+  const step = d => {
+    const max = parseInt(qtyEl.max, 10) || 1;
+    qtyEl.value = Math.min(max, Math.max(1, (parseInt(qtyEl.value, 10) || 1) + d));
+  };
+  on('btnFbsVychQtyMinus', () => step(-1));
+  on('btnFbsVychQtyPlus',  () => step(1));
+
+  const overlay = document.getElementById('fbsVychConfirmOverlay');
+  if (overlay) overlay.addEventListener('click', e => { if (e.target === overlay) hideFbsVychConfirm(); });
+  const cellEl = document.getElementById('fbsVychFoundCell');
+  if (cellEl) cellEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submitFbsVychResult(); } });
 }

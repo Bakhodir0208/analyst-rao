@@ -130,6 +130,30 @@ body {
   background: rgba(8,12,21,0.3);
 }
 
+/* ── Brand (до входа) / plan (после входа) ── */
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.app-brand-logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  color: #c7d2fe;
+  background: rgba(129,140,248,0.14);
+  border: 1px solid rgba(129,140,248,0.3);
+  flex-shrink: 0;
+}
+.app-header:not(.is-auth) .plan-display { display: none; }
+.app-header.is-auth .app-brand { display: none; }
+
 /* ── Plan progress ring ── */
 .plan-display {
   display: flex;
@@ -1368,7 +1392,7 @@ body {
 
 /* ── Screen BezShk ──────────────────────────────── */
 .bezshk-container {
-  padding: 16px;
+  padding: 8px 0 0;
   max-width: 440px;
   margin: 0 auto;
   width: 100%;
@@ -1382,7 +1406,7 @@ body {
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--r-card);
-  padding: 20px;
+  padding: 18px 14px;
   box-shadow: 0 8px 32px rgba(0,0,0,0.3);
   width: 100%;
   box-sizing: border-box;
@@ -1421,6 +1445,15 @@ body {
   box-sizing: border-box;
 }
 
+.bezshk-input::placeholder {
+  font-family: var(--font);
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
 .bezshk-input:focus {
   border-color: #818cf8 !important;
   box-shadow: 0 0 12px rgba(129, 140, 248, 0.25) !important;
@@ -1429,7 +1462,7 @@ body {
 .bezshk-actions-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
   box-sizing: border-box;
   justify-content: center;
@@ -1438,22 +1471,39 @@ body {
 }
 
 .btn-bezshk-action {
-  height: 52px;
+  height: 60px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
-  gap: 6px;
-  padding: 0 8px;
+  gap: 3px;
+  padding: 0 4px;
   font-size: 0.85rem;
   font-weight: 800;
   border-radius: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  min-width: 0;
   border: none;
   cursor: pointer;
   transition: all 0.18s ease;
   font-family: var(--font);
   width: 100%;
   box-sizing: border-box;
+}
+
+.btn-bezshk-action .bz-emoji {
+  flex-shrink: 0;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.btn-bezshk-action .bz-label {
+  font-size: min(0.78rem, 3.05vw);
+  letter-spacing: -0.01em;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .btn-shortage {
@@ -1561,6 +1611,7 @@ body {
 }
 
 .bezshk-history-title {
+  white-space: nowrap;
   font-size: 0.85rem;
   font-weight: 700;
   color: var(--text-muted);
@@ -2055,3 +2106,92 @@ body {
   transform: translateY(-1px);
 }
 
+
+/* ── FBS: Поиск актов ───────────────────────────── */
+.fbs-acts-view {
+  flex: 1;
+  min-height: 0;
+}
+
+.fbs-act-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: var(--r-lg);
+  background: var(--fbs-subtle);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  flex-shrink: 0;
+}
+
+.fbs-act-head-label {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--fbs);
+}
+
+.copy-btn.fbs-act-number {
+  font-size: 1.15rem;
+  font-weight: 800;
+  padding: 6px 12px;
+  background: rgba(8, 12, 21, 0.45);
+  border-color: rgba(56, 189, 248, 0.35);
+}
+
+.fbs-act-meta {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.fbs-fill {
+  background: linear-gradient(90deg, var(--fbs) 0%, #7dd3fc 100%);
+}
+
+.info-row-top { align-items: flex-start; }
+
+.fbs-cells {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fbs-cells .copy-btn {
+  font-size: 0.82rem;
+  padding: 3px 7px;
+}
+
+.task-name.task-name-muted {
+  color: var(--text-dim);
+  font-weight: 600;
+  font-style: italic;
+}
+
+/* ── FBS: Поиск вычерков ───────────────────────── */
+.fbs-vych-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--r-lg);
+  background: rgba(249, 115, 22, 0.1);
+  border: 1px solid rgba(249, 115, 22, 0.28);
+  flex-shrink: 0;
+}
+.fbs-vych-left {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.fbs-vych-sum {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: #fb923c;
+  white-space: nowrap;
+}
