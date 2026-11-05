@@ -107,6 +107,14 @@ function doPost(e) {
       return handleReleaseFbsAct(data);
     }
 
+    if (data.action === 'skipFbsAct') {
+      return handleSkipFbsAct(data);
+    }
+
+    if (data.action === 'skipFbsActPos') {
+      return handleSkipFbsActPos(data);
+    }
+
     if (data.action === 'logFbsVycherkResult') {
       return handleLogFbsVycherkResult(data);
     }
@@ -1925,26 +1933,40 @@ function handleGetFbsActTask(employeeId) {
     var acts  = readFbsPendingActs(ctx.sheet, ctx.cols);
     var locks = readFbsActLocks(ctx.bpSs);
 
-    var mine = null, free = [], lockedByOthers = 0;
+    var skippedActs = fbsSkipList('ACT', employeeName);
+    var skippedPos  = fbsSkipList('POS', employeeName);
+
+    var mine = null, free = [], freeSkipped = [], lockedByOthers = 0;
     for (var i = 0; i < acts.length; i++) {
       var owner = locks[acts[i].key];
       if (owner && isEmployeeMatch(owner, employeeName)) { if (!mine) mine = acts[i]; }
       else if (owner) lockedByOthers++;
+      else if (skippedActs.indexOf(acts[i].key) >= 0) freeSkipped.push(acts[i]);
       else free.push(acts[i]);
     }
 
+    // Пропущенные акты выдаём только если других свободных нет
+    var fromSkipped = false;
     var current = mine || free.shift() || null;
+    if (!current && freeSkipped.length) { current = freeSkipped.shift(); fromSkipped = true; }
     if (!current) {
       setFbsActLock(ctx.bpSs, employeeName, null);
       return jsonOk({ success: true, act: null, lockedByOthers: lockedByOthers });
     }
 
     setFbsActLock(ctx.bpSs, employeeName, current.act);
+
+    // Пропущенные позиции — в конец акта (порядок остальных сохраняется)
+    var rows = current.rows.filter(function (r) { return skippedPos.indexOf(current.key + '|' + fbsNorm(r.sku)) < 0; })
+      .concat(current.rows.filter(function (r) { return skippedPos.indexOf(current.key + '|' + fbsNorm(r.sku)) >= 0; }));
+
     return jsonOk({
       success:        true,
       act:            current.act,
-      rows:           current.rows,
-      actsLeft:       free.length,       // свободных актов после текущего
+      rows:           rows,
+      actsLeft:       free.length + freeSkipped.length,   // свободных актов после текущего
+      skippedLeft:    freeSkipped.length,
+      fromSkipped:    fromSkipped,
       lockedByOthers: lockedByOthers
     });
   } finally {
@@ -2252,5 +2274,52 @@ function handleReleaseFbsVycherk(data) {
   var myKey  = cache.get(empKey);
   if (myKey) cache.remove('VYCH_LOCK_' + myKey);
   cache.remove(empKey);
+  return jsonOk({ success: true });
+}
+
+
+// ─── Пропуски в «Поиске актов» (на сотрудника, хранятся 12 часов) ───
+var FBS_SKIP_TTL_SEC = 12 * 60 * 60;
+
+function fbsSkipList(kind, employeeName) {
+  try {
+    var raw = CacheService.getScriptCache().get('FBSSKIP_' + kind + '_' + fbsNorm(employeeName));
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) { return []; }
+}
+
+function fbsSkipAdd(kind, employeeName, key) {
+  var list = fbsSkipList(kind, employeeName);
+  if (list.indexOf(key) < 0) list.push(key);
+  if (list.length > 300) list = list.slice(-300);
+  CacheService.getScriptCache().put('FBSSKIP_' + kind + '_' + fbsNorm(employeeName), JSON.stringify(list), FBS_SKIP_TTL_SEC);
+}
+
+/** POST skipFbsAct { employeeId, act } — пропустить акт целиком: снять бронь, больше не выдавать (пока есть другие). */
+function handleSkipFbsAct(data) {
+  if (!data.act) return jsonOk({ success: false, error: 'Неполные данные' });
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var employeeName = getEmployeeNameById(ss, data.employeeId);
+  if (!employeeName) return jsonOk({ success: false, error: 'Сотрудник не найден' });
+  var bpSs = getBpSpreadsheet();
+  if (!bpSs) return jsonOk({ success: false, error: 'Нет доступа к таблице БП' });
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return jsonOk({ success: false, error: 'Сервер занят, попробуйте ещё раз' });
+  try {
+    fbsSkipAdd('ACT', employeeName, fbsNorm(data.act));
+    setFbsActLock(bpSs, employeeName, null);
+  } finally {
+    lock.releaseLock();
+  }
+  return jsonOk({ success: true });
+}
+
+/** POST skipFbsActPos { employeeId, act, sku } — позиция уходит в конец акта. */
+function handleSkipFbsActPos(data) {
+  if (!data.act || !data.sku) return jsonOk({ success: false, error: 'Неполные данные' });
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var employeeName = getEmployeeNameById(ss, data.employeeId);
+  if (!employeeName) return jsonOk({ success: false, error: 'Сотрудник не найден' });
+  fbsSkipAdd('POS', employeeName, fbsNorm(data.act) + '|' + fbsNorm(data.sku));
   return jsonOk({ success: true });
 }

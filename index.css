@@ -2195,3 +2195,30 @@ body {
   color: #fb923c;
   white-space: nowrap;
 }
+
+/* ── FBS: кнопки пропуска ── */
+.fbs-skip-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+.fbs-skip-btn {
+  height: 42px;
+  border-radius: 12px;
+  border: 1px dashed var(--border);
+  background: rgba(255,255,255,0.03);
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: min(0.8rem, 3.1vw);
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fbs-skip-btn:hover { color: var(--text); border-color: rgba(129,140,248,0.4); }
+.fbs-skip-btn:active { transform: scale(0.97); }
+.fbs-skip-btn-act { color: #fbbf24; border-color: rgba(251,191,36,0.35); }

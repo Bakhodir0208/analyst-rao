@@ -1,4 +1,4 @@
-const CACHE = 'rao-v8';
+const CACHE = 'rao-v9';
 const ASSETS = ['./', './index.html', './index.css', './app.js'];
 
 self.addEventListener('install', e => {

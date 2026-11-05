@@ -1,30 +1,40 @@
 /**
  * ═══════════════════════════════════════════════════════════
- *  FBS — ИМПОРТ АКТОВ «MISSING FBS RETURN (Support)»
+ *  FBS — СИНХРОНИЗАЦИЯ АКТОВ С «ФБС компенсация (сергели)»
  *  Отдельный файл для проекта Apps Script таблицы
- *  «Запросы от БП | Аналитика». Добавлять как НОВЫЙ файл
- *  (Файлы → + → Скрипт), существующие скрипты не трогать.
+ *  «Запросы от БП | Аналитика».
  *
- *  Источник: «НТВ ФФО» → лист «Ответы на форму (1)»
- *  Приёмник: эта таблица → лист «Поиск FBS»
- *  Берём: Отметка времени → Дата заявки, Номер акта, ШК товара.
- *  Каждый запуск сканирует ВСЮ таблицу-источник; дубли отсекаются
- *  по паре «Номер акта + ШК», уже существующей в «Поиск FBS».
+ *  1) ИМПОРТ: «ФБС компенсация (сергели)» → «Лист1»
+ *       → эта таблица → «Поиск FBS»
+ *     Берём: Дата заявки, Номер акта возврата, ШК товара,
+ *            Количество ШК для поиска, Цена за 1 ед.
+ *     Считаем: Сумма = цена × Количество для поиска,
+ *              Сумма нашли = цена × Найдено (только после статуса).
+ *     Вся таблица сканируется каждый раз; дубли отсекаются
+ *     по паре «Номер акта + ШК». У уже перенесённых строк
+ *     пустое «Количество для поиска» дозаполняется.
  *
- *  Установка триггера: один раз запустить fbsImport_setupTrigger().
- *  Работает каждый час с 9:00 до 21:59 по Ташкенту.
+ *  2) ОБРАТНО: «Поиск FBS» → «ФБС компенсация (сергели)»
+ *     Колонки: Ячейка для поиска, Найдено в ячейке,
+ *     Ячейка хранение акта, Статус, Найдено, Сотрудник Аналитики.
+ *     Сопоставление по «акт + ШК». Наше значение перезаписывает
+ *     их ячейку; если у нас пусто — их значение не трогаем.
+ *
+ *  Триггер: fbsImport_auto, каждый час, работает 9:00–21:59 (Ташкент).
+ *  Установка: один раз запустить fbsImport_setupTrigger().
  * ═══════════════════════════════════════════════════════════
  */
 var FBSIMP = {
-  SRC_ID:     '1077RwX9qsDgOb7thhtNltyEXQol1keaIw8XCr9isVFA', // НТВ ФФО
-  SRC_GID:    22482935,                                        // «Ответы на форму (1)»
-  SRC_NAME:   'Ответы на форму (1)',
-  DST_ID:     '1-Ec83kDyLZvZ_l7zNyu3VrH-XSutfa0oI4FJ16bZY5Y', // Запросы от БП | Аналитика
-  DST_NAME:   'Поиск FBS',
-  ACT_TYPE:   'MISSING FBS RETURN (Support)',
-  TZ:         'Asia/Tashkent',
-  FROM_HOUR:  9,   // включительно
-  TO_HOUR:    21   // включительно (последний запуск в 21:xx)
+  SRC_ID:    '1rkCY44yxdsYdEqyPj4q9-uhV9oX_ydF629K0ienOCjA', // ФБС компенсация (сергели)
+  SRC_NAME:  'Лист1',
+  DST_ID:    '1-Ec83kDyLZvZ_l7zNyu3VrH-XSutfa0oI4FJ16bZY5Y', // Запросы от БП | Аналитика
+  DST_NAME:  'Поиск FBS',
+  // Колонки, которые возвращаем в «ФБС компенсация» (точные названия в обеих таблицах)
+  BACK_COLS: ['Ячейка для поиска', 'Найдено в ячейке', 'Ячейка хранение акта',
+              'Статус', 'Найдено', 'Сотрудник Аналитики'],
+  TZ:        'Asia/Tashkent',
+  FROM_HOUR: 9,   // включительно
+  TO_HOUR:   21   // включительно (последний запуск в 21:xx)
 };
 
 function fbsImport_norm_(v) {
@@ -34,103 +44,118 @@ function fbsImport_norm_(v) {
 }
 
 function fbsImport_text_(v) {
+  if (v === null || v === undefined) return '';
   return typeof v === 'number' ? String(Math.round(v)) : String(v).trim();
 }
 
-function fbsImport_col_(headers, prefixes) {
-  for (var i = 0; i < headers.length; i++) {
-    var h = String(headers[i] || '').toLowerCase().replace(/\s+/g, ' ').trim();
-    for (var p = 0; p < prefixes.length; p++) {
-      if (h.indexOf(prefixes[p].toLowerCase()) === 0) return i;
+function fbsImport_hdr_(sheet) {
+  return sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+    .map(function (h) { return String(h || '').toLowerCase().replace(/\s+/g, ' ').trim(); });
+}
+
+/** Индекс колонки: сначала точное совпадение, потом по началу названия. -1 если нет. */
+function fbsImport_col_(headers, exact, prefixes) {
+  var i = exact ? headers.indexOf(exact.toLowerCase()) : -1;
+  if (i >= 0) return i;
+  for (var k = 0; k < headers.length; k++) {
+    for (var p = 0; p < (prefixes || []).length; p++) {
+      if (headers[k].indexOf(prefixes[p].toLowerCase()) === 0) return k;
     }
   }
   return -1;
 }
 
-function fbsImport_srcSheet_() {
-  var ss = SpreadsheetApp.openById(FBSIMP.SRC_ID);
-  var sheets = ss.getSheets();
-  for (var i = 0; i < sheets.length; i++) {
-    if (sheets[i].getSheetId() === FBSIMP.SRC_GID) return sheets[i];
-  }
-  return ss.getSheetByName(FBSIMP.SRC_NAME);
+function fbsImport_num_(v) {
+  if (typeof v === 'number') return v;
+  var n = parseFloat(String(v === null || v === undefined ? '' : v).replace(/\s/g, '').replace(',', '.'));
+  return isNaN(n) ? null : n;
 }
 
-/** Импорт. Возвращает { added, skipped, total }. */
+function fbsImport_cmp_(v) {
+  if (v instanceof Date) return String(v.getTime());
+  if (typeof v === 'number') return String(v);
+  return String(v === null || v === undefined ? '' : v).trim();
+}
+
+/** Синхронизация. Возвращает статистику. */
 function fbsImport_run() {
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) throw new Error('Импорт уже выполняется');
+  if (!lock.tryLock(30000)) throw new Error('Синхронизация уже выполняется');
   try {
     // ── Источник ──
-    var src = fbsImport_srcSheet_();
-    if (!src) throw new Error('Не найден лист ответов в «НТВ ФФО»');
+    var srcSs = SpreadsheetApp.openById(FBSIMP.SRC_ID);
+    var src = srcSs.getSheetByName(FBSIMP.SRC_NAME) || srcSs.getSheets()[0];
     var srcLastRow = src.getLastRow();
-    if (srcLastRow < 2) return { added: 0, skipped: 0, total: 0 };
-
-    var srcHeaders = src.getRange(1, 1, 1, src.getLastColumn()).getValues()[0];
-    var cTime = fbsImport_col_(srcHeaders, ['отметка времени', 'timestamp']);
-    var cType = fbsImport_col_(srcHeaders, ['тип акта']);
-    var cAct  = fbsImport_col_(srcHeaders, ['номер акта']);
-    var cSku  = fbsImport_col_(srcHeaders, ['шк товара']);
-    if (cType < 0 || cAct < 0 || cSku < 0) {
-      throw new Error('В «НТВ ФФО» не найдены колонки: Тип акта / Номер акта / Шк товара');
-    }
-    var readCols = Math.max(cTime, cType, cAct, cSku) + 1;
-    var srcData = src.getRange(2, 1, srcLastRow - 1, readCols).getValues();
+    var srcH = fbsImport_hdr_(src);
+    var sDate = fbsImport_col_(srcH, 'дата заявки', ['дата заявки']);
+    var sAct  = fbsImport_col_(srcH, 'номер акта возврата', ['номер акта']);
+    var sSku  = fbsImport_col_(srcH, 'шк товара', ['шк товара']);
+    var sQty  = fbsImport_col_(srcH, 'количество шк для поиска', ['количество']);
+    var sPrice= fbsImport_col_(srcH, 'цена за 1 ед товара вычеркнутого шк', ['цена за 1', 'цена']);
+    if (sAct < 0 || sSku < 0) throw new Error('В «ФБС компенсация» не найдены колонки: Номер акта возврата / ШК товара');
+    var srcData = srcLastRow >= 2 ? src.getRange(2, 1, srcLastRow - 1, src.getLastColumn()).getValues() : [];
 
     // ── Приёмник ──
     var dst = SpreadsheetApp.openById(FBSIMP.DST_ID).getSheetByName(FBSIMP.DST_NAME);
     if (!dst) throw new Error('Не найден лист «' + FBSIMP.DST_NAME + '»');
+    var dstH = fbsImport_hdr_(dst);
+    var dDate = fbsImport_col_(dstH, 'дата заявки', ['дата заявки']);
+    var dAct  = fbsImport_col_(dstH, 'номер акта возврата', ['номер акта']);
+    var dSku  = fbsImport_col_(dstH, 'шк товара', ['шк товара']);
+    var dQty  = fbsImport_col_(dstH, 'количество для поиска', ['количество']);
+    var dPrice= fbsImport_col_(dstH, 'цена', ['цена']);
+    var dSum  = fbsImport_col_(dstH, 'сумма', null);
+    var dSumF = fbsImport_col_(dstH, 'сумма нашли', ['сумма нашл']);
+    var dStat = fbsImport_col_(dstH, 'статус', null);
+    var dFound= fbsImport_col_(dstH, 'найдено', null);
+    if (dAct < 0 || dSku < 0) throw new Error('В «' + FBSIMP.DST_NAME + '» не найдены колонки: Номер акта возврата / ШК товара');
 
-    var dstHeaders = dst.getRange(1, 1, 1, dst.getLastColumn()).getValues()[0];
-    var dDate = fbsImport_col_(dstHeaders, ['дата заявки']);
-    var dAct  = fbsImport_col_(dstHeaders, ['номер акта']);
-    var dSku  = fbsImport_col_(dstHeaders, ['шк товара']);
-    if (dAct < 0 || dSku < 0) {
-      throw new Error('В «' + FBSIMP.DST_NAME + '» не найдены колонки: Номер акта возврата / ШК товара');
-    }
-
-    // Уже импортированные пары + последняя реально заполненная строка
     var dstLastRow = Math.max(dst.getLastRow(), 1);
-    var existing = {};
+    var dstData = dstLastRow >= 2 ? dst.getRange(2, 1, dstLastRow - 1, dst.getLastColumn()).getValues() : [];
+
+    // Карта приёмника: ключ → индекс строки; последняя реально заполненная строка
+    var dstByKey = {};
     var lastDataRow = 1;
-    if (dstLastRow >= 2) {
-      var actVals = dst.getRange(2, dAct + 1, dstLastRow - 1, 1).getValues();
-      var skuVals = dst.getRange(2, dSku + 1, dstLastRow - 1, 1).getValues();
-      for (var r = 0; r < actVals.length; r++) {
-        var a = fbsImport_norm_(actVals[r][0]);
-        var s = fbsImport_norm_(skuVals[r][0]);
-        if (a || s) {
-          existing[a + '|' + s] = true;
-          lastDataRow = r + 2;
-        }
-      }
+    for (var r = 0; r < dstData.length; r++) {
+      var a = fbsImport_norm_(dstData[r][dAct]), s = fbsImport_norm_(dstData[r][dSku]);
+      if (!a && !s) continue;
+      lastDataRow = r + 2;
+      var k = a + '|' + s;
+      if (!(k in dstByKey)) dstByKey[k] = r;
     }
 
-    // ── Отбор новых ──
-    var typeNeedle = FBSIMP.ACT_TYPE.toLowerCase();
-    var toAdd = [], skipped = 0, total = 0;
+    // ── 1. Импорт новых строк + дозаполнение количества ──
+    var toAdd = [], qtyFill = [], seen = {}, srcPrice = {};
     for (var i = 0; i < srcData.length; i++) {
       var row = srcData[i];
-      if (String(row[cType] || '').trim().toLowerCase() !== typeNeedle) continue;
-      total++;
-      var key = fbsImport_norm_(row[cAct]) + '|' + fbsImport_norm_(row[cSku]);
-      if (key === '|' || existing[key]) { skipped++; continue; }
-      existing[key] = true;
+      var key = fbsImport_norm_(row[sAct]) + '|' + fbsImport_norm_(row[sSku]);
+      if (!fbsImport_norm_(row[sAct]) || !fbsImport_norm_(row[sSku])) continue;
+      var qty = sQty >= 0 ? (parseInt(row[sQty], 10) || '') : '';
+      var price = sPrice >= 0 ? fbsImport_num_(row[sPrice]) : null;
+      if (price !== null && !(key in srcPrice)) srcPrice[key] = price;
+      if (key in dstByKey) {
+        var di = dstByKey[key];
+        if (dQty >= 0 && qty !== '' && fbsImport_text_(dstData[di][dQty]) === '') {
+          qtyFill.push({ row: di + 2, qty: qty });
+          dstData[di][dQty] = qty;
+        }
+        continue;
+      }
+      if (seen[key]) continue;
+      seen[key] = true;
       toAdd.push({
-        date: cTime >= 0 ? row[cTime] : new Date(),
-        act:  fbsImport_text_(row[cAct]),
-        sku:  fbsImport_text_(row[cSku])
+        date: sDate >= 0 ? row[sDate] : new Date(),
+        act:  fbsImport_text_(row[sAct]),
+        sku:  fbsImport_text_(row[sSku]),
+        qty:  qty,
+        price: price === null ? '' : price
       });
     }
 
-    // ── Запись ──
     if (toAdd.length) {
-      var startRow = lastDataRow + 1;
-      var n = toAdd.length;
+      var startRow = lastDataRow + 1, n = toAdd.length;
       var needRows = startRow + n - 1 - dst.getMaxRows();
       if (needRows > 0) dst.insertRowsAfter(dst.getMaxRows(), needRows);
-
       dst.getRange(startRow, dAct + 1, n, 1).setNumberFormat('@')
          .setValues(toAdd.map(function (x) { return [x.act]; }));
       dst.getRange(startRow, dSku + 1, n, 1).setNumberFormat('@')
@@ -139,9 +164,70 @@ function fbsImport_run() {
         dst.getRange(startRow, dDate + 1, n, 1).setNumberFormat('dd.MM.yyyy HH:mm:ss')
            .setValues(toAdd.map(function (x) { return [x.date]; }));
       }
+      if (dQty >= 0) {
+        dst.getRange(startRow, dQty + 1, n, 1)
+           .setValues(toAdd.map(function (x) { return [x.qty]; }));
+      }
+    }
+    qtyFill.forEach(function (q) { dst.getRange(q.row, dQty + 1).setValue(q.qty); });
+
+    // ── 1б. Цена, Сумма, Сумма нашли — пересчёт по всем строкам ──
+    var sumsChanged = 0;
+    if (dPrice >= 0 || dSum >= 0 || dSumF >= 0) {
+      var lastRowNow = Math.max(dst.getLastRow(), 1);
+      if (lastRowNow >= 2) {
+        var all = dst.getRange(2, 1, lastRowNow - 1, dst.getLastColumn()).getValues();
+        var colPrice = [], colSum = [], colSumF = [];
+        for (var x = 0; x < all.length; x++) {
+          var rr = all[x];
+          var rk = fbsImport_norm_(rr[dAct]) + '|' + fbsImport_norm_(rr[dSku]);
+          var hasKey = rk !== '|';
+          var pr = (rk in srcPrice) ? srcPrice[rk] : (dPrice >= 0 ? fbsImport_num_(rr[dPrice]) : null);
+          var q  = dQty   >= 0 ? fbsImport_num_(rr[dQty])   : null;
+          var f  = dFound >= 0 ? fbsImport_num_(rr[dFound]) : null;
+          var st = dStat  >= 0 ? fbsImport_text_(rr[dStat]) : '';
+          var newPrice = !hasKey ? rr[dPrice] : (pr === null ? '' : pr);
+          var newSum   = !hasKey ? rr[dSum]   : (pr !== null && q !== null ? pr * q : '');
+          var newSumF  = !hasKey ? rr[dSumF]  : (pr !== null && st ? pr * (f || 0) : '');
+          if (dPrice >= 0) { if (fbsImport_cmp_(rr[dPrice]) !== fbsImport_cmp_(newPrice)) sumsChanged++; colPrice.push([newPrice]); }
+          if (dSum   >= 0) { if (fbsImport_cmp_(rr[dSum])   !== fbsImport_cmp_(newSum))   sumsChanged++; colSum.push([newSum]); }
+          if (dSumF  >= 0) { if (fbsImport_cmp_(rr[dSumF])  !== fbsImport_cmp_(newSumF))  sumsChanged++; colSumF.push([newSumF]); }
+        }
+        if (sumsChanged) {
+          if (dPrice >= 0) dst.getRange(2, dPrice + 1, colPrice.length, 1).setValues(colPrice);
+          if (dSum   >= 0) dst.getRange(2, dSum   + 1, colSum.length,   1).setValues(colSum);
+          if (dSumF  >= 0) dst.getRange(2, dSumF  + 1, colSumF.length,  1).setValues(colSumF);
+        }
+      }
     }
 
-    return { added: toAdd.length, skipped: skipped, total: total };
+    // ── 2. Обратная синхронизация результатов ──
+    var pairs = [];   // [{ s: индекс в источнике, d: индекс в приёмнике }]
+    FBSIMP.BACK_COLS.forEach(function (name) {
+      var si = srcH.indexOf(name.toLowerCase());
+      var di = dstH.indexOf(name.toLowerCase());
+      if (si >= 0 && di >= 0) pairs.push({ s: si, d: di });
+    });
+
+    var backWritten = 0;
+    if (pairs.length) {
+      for (var j = 0; j < srcData.length; j++) {
+        var sr = srcData[j];
+        var bk = fbsImport_norm_(sr[sAct]) + '|' + fbsImport_norm_(sr[sSku]);
+        if (!(bk in dstByKey)) continue;
+        var dr = dstData[dstByKey[bk]];
+        for (var c = 0; c < pairs.length; c++) {
+          var ourVal = dr[pairs[c].d];
+          if (fbsImport_cmp_(ourVal) === '') continue;                     // у нас пусто — не трогаем
+          if (fbsImport_cmp_(ourVal) === fbsImport_cmp_(sr[pairs[c].s])) continue;  // уже совпадает
+          src.getRange(j + 2, pairs[c].s + 1).setValue(ourVal);
+          backWritten++;
+        }
+      }
+    }
+
+    return { added: toAdd.length, qtyFilled: qtyFill.length, sumsChanged: sumsChanged,
+             backWritten: backWritten, backCols: pairs.length };
   } finally {
     lock.releaseLock();
   }
@@ -153,9 +239,10 @@ function fbsImport_auto() {
   if (hour < FBSIMP.FROM_HOUR || hour > FBSIMP.TO_HOUR) return;
   try {
     var res = fbsImport_run();
-    console.log('FBS импорт: добавлено ' + res.added + ', пропущено ' + res.skipped + ', всего ' + res.total);
+    console.log('FBS синхронизация: новых строк ' + res.added + ', дозаполнено кол-во ' + res.qtyFilled + ', цен/сумм обновлено ' + res.sumsChanged +
+                ', обратно записано ячеек ' + res.backWritten + ' (колонок ' + res.backCols + ')');
   } catch (e) {
-    console.error('FBS импорт: ' + e);
+    console.error('FBS синхронизация: ' + e);
   }
 }
 

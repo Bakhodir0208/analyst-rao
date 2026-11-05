@@ -1996,6 +1996,7 @@ async function initFbsActsScreen() {
     st.actsLeft = res.actsLeft || 0;
     setFbsActsState('task');
     renderFbsActTask();
+    if (res.fromSkipped) showError('Других свободных актов нет — открыт ранее пропущенный');
   } catch (err) {
     console.error('[FBS acts] load error:', err);
     setFbsActsState('error', 'Ошибка подключения к серверу');
@@ -2079,6 +2080,14 @@ function showFbsActConfirm(result) {
   if (!row || st.busy) return;
   st.pending = result;
 
+  if (result === 'skipAct') {
+    document.getElementById('fbsActConfirmTitle').textContent = 'Пропустить акт целиком?';
+    document.getElementById('fbsActConfirmLabel').textContent = `⏩ ${st.act}`;
+    document.getElementById('fbsActFoundWrap').style.display = 'none';
+    document.getElementById('fbsActConfirmOverlay').style.display = 'flex';
+    return;
+  }
+
   const isFound = result === 'Найден';
   document.getElementById('fbsActConfirmTitle').textContent = isFound
     ? 'Подтвердите данные найденного товара:'
@@ -2110,6 +2119,7 @@ async function submitFbsActResult() {
   const row    = st.rows[0];
   const result = st.pending;
   if (!row || !result || st.busy) return;
+  if (result === 'skipAct') return submitFbsSkipAct();
 
   const isFound = result === 'Найден';
   let foundCell = '', foundQty = 0;
@@ -2164,6 +2174,43 @@ async function submitFbsActResult() {
   }
 }
 
+// Пропустить позицию: в конец акта (на сервере запоминается, чтобы порядок сохранился после перезахода)
+function skipFbsActPosition() {
+  const st  = fbsActsState();
+  const row = st.rows[0];
+  if (!row || st.busy) return;
+  if (st.rows.length < 2) {
+    showError('Это последняя позиция акта. Можно пропустить акт целиком.');
+    return;
+  }
+  st.rows.push(st.rows.shift());
+  apiPost({ action: 'skipFbsActPos', employeeId: state.employeeId, act: st.act, sku: row.sku }).catch(() => {});
+  showSuccess('Позиция перенесена в конец акта');
+  renderFbsActTask();
+}
+
+async function submitFbsSkipAct() {
+  const st = fbsActsState();
+  if (!st.act || st.busy) return;
+  st.busy = true;
+  showLoader('Пропуск акта...');
+  try {
+    const res = await apiPost({ action: 'skipFbsAct', employeeId: state.employeeId, act: st.act });
+    if (!res.success) { showError(res.error || 'Ошибка'); return; }
+    hideFbsActConfirm();
+    showSuccess(`Акт ${st.act} пропущен`);
+    st.act = null; st.rows = [];
+    st.busy = false;
+    await initFbsActsScreen();
+  } catch (err) {
+    console.error('[FBS acts] skip error:', err);
+    showError('Ошибка подключения к серверу');
+  } finally {
+    st.busy = false;
+    hideLoader();
+  }
+}
+
 function releaseFbsAct() {
   const st = fbsActsState();
   if (!st.act || !state.employeeId) return;
@@ -2176,6 +2223,8 @@ function setupFbsActsEventListeners() {
   const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
 
   on('fbsActFound',    () => showFbsActConfirm('Найден'));
+  on('fbsActSkipPos',  skipFbsActPosition);
+  on('fbsActSkipAct',  () => showFbsActConfirm('skipAct'));
   on('fbsActNotFound', () => showFbsActConfirm('Не найден'));
   on('btnFbsActCancel',    hideFbsActConfirm);
   on('btnFbsActConfirmOk', submitFbsActResult);
