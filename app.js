@@ -51,6 +51,7 @@ function initUI() {
       bezshk:    document.getElementById('screen-bezshk'),
       bp:        document.getElementById('screen-bp'),
       fbs:       document.getElementById('screen-fbs'),
+      vozv:      document.getElementById('screen-vozv'),
     },
 
     // Inputs
@@ -106,6 +107,8 @@ function loadSettings() {
 
   state.employeeId   = localStorage.getItem('rao_employee_id')     || '';
   state.employeeName = localStorage.getItem('rao_employee_name')   || '';
+  state.role         = localStorage.getItem('rao_role')            || 'staff';
+  applyRole();
 
   if (ui.scriptUrlInput)  ui.scriptUrlInput.value  = state.scriptUrl;
   if (ui.employeeIdInput) ui.employeeIdInput.value = state.employeeId;
@@ -115,10 +118,15 @@ function loadSettings() {
   } else if (state.employeeId && state.employeeName) {
     updateWelcomeChip();
     showScreen('dashboard');
-    fetchPlanPercent(); // подтянуть % плана в фоне
+    if (state.role !== 'helper') fetchPlanPercent(); // подтянуть % плана в фоне
   } else {
     showScreen('login');
   }
+}
+
+// Роль: 'staff' — все блоки; 'helper' — только «Поиск вычерков (возвраты)»
+function applyRole() {
+  document.body.classList.toggle('role-helper', state.role === 'helper');
 }
 
 function handleSaveSettings() {
@@ -155,15 +163,18 @@ async function handleLogin() {
     if (result.success) {
       state.employeeId   = String(result.employee.id);
       state.employeeName = result.employee.name;
+      state.role         = result.employee.role === 'helper' ? 'helper' : 'staff';
 
       localStorage.setItem('rao_employee_id',   state.employeeId);
       localStorage.setItem('rao_employee_name', state.employeeName);
+      localStorage.setItem('rao_role',          state.role);
+      applyRole();
 
       hideLoader();
       updateWelcomeChip();
       showScreen('dashboard');
       showSuccess('Добро пожаловать, ' + firstName(state.employeeName) + '!');
-      fetchPlanPercent(); // подтянуть % плана в фоне
+      if (state.role !== 'helper') fetchPlanPercent(); // подтянуть % плана в фоне
     } else {
       hideLoader();
       showError(result.error || 'Сотрудник не найден');
@@ -182,6 +193,9 @@ function handleLogout() {
   state.employeeName = '';
   localStorage.removeItem('rao_employee_id');
   localStorage.removeItem('rao_employee_name');
+  localStorage.removeItem('rao_role');
+  state.role = 'staff';
+  applyRole();
 
   ui.employeeIdInput.value = '';
   ui.welcomeChip.style.display = 'none';
@@ -425,6 +439,7 @@ function setupEventListeners() {
   setupBpEventListeners();
   setupFbsActsEventListeners();
   setupFbsVycherkiEventListeners();
+  setupVozvEventListeners();
 
   // Missing module
   document.getElementById('btnMissingRefresh').addEventListener('click', initMissingScreen);
@@ -2551,4 +2566,172 @@ function setupFbsVycherkiEventListeners() {
   if (overlay) overlay.addEventListener('click', e => { if (e.target === overlay) hideFbsVychConfirm(); });
   const cellEl = document.getElementById('fbsVychFoundCell');
   if (cellEl) cellEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submitFbsVychResult(); } });
+}
+
+
+// ═══════════════════════════════════════════
+//  ПОИСК ВЫЧЕРКОВ (ВОЗВРАТЫ)
+//  Список назначенных позиций приходит один раз при открытии
+//  (уже в нужном порядке: дорогие → дешёвые, по ячейкам).
+// ═══════════════════════════════════════════
+function vozvState() {
+  if (!state.vozv) state.vozv = { tasks: [], done: 0, total: 0, pending: null, busy: false };
+  return state.vozv;
+}
+
+function setVozvState(name, message) {
+  ['loading', 'empty', 'error', 'task', 'done'].forEach(s => {
+    const el = document.getElementById('vozv-' + s);
+    if (el) el.style.display = 'none';
+  });
+  const el = document.getElementById('vozv-' + name);
+  if (el) el.style.display = 'flex';
+  if (name === 'error' && message) document.getElementById('vozv-error-msg').textContent = message;
+}
+
+async function initVozvScreen() {
+  const st = vozvState();
+  setVozvState('loading');
+  try {
+    const res = await apiGet({ action: 'getVozvTasks', id: state.employeeId });
+    if (!res.success) { setVozvState('error', res.error || 'Ошибка получения списка'); return; }
+    st.tasks = res.tasks || [];
+    st.done  = res.done || 0;
+    st.total = st.tasks.length + st.done;
+    if (!st.tasks.length) {
+      setVozvState(st.done ? 'done' : 'empty');
+      if (st.done) document.getElementById('vozv-done-desc').textContent = `Отработано: ${st.done}. Сообщите ведущему — он выдаст новые.`;
+      return;
+    }
+    setVozvState('task');
+    renderVozvTask();
+  } catch (err) {
+    console.error('[Vozv] load error:', err);
+    setVozvState('error', 'Ошибка подключения к серверу');
+  }
+}
+
+function renderVozvTask() {
+  const st = vozvState();
+  const t  = st.tasks[0];
+  if (!t) return;
+
+  const card = document.getElementById('vozv-card-view');
+  if (card) { card.classList.remove('card-refresh-flash'); void card.offsetHeight; card.classList.add('card-refresh-flash'); }
+
+  const num = st.done + 1;
+  const pct = st.total ? Math.round((st.done / st.total) * 100) : 0;
+  document.getElementById('vozv-progress-text').textContent = `Позиция ${num} из ${st.total}`;
+  document.getElementById('vozv-progress-pct').textContent  = pct + '%';
+  document.getElementById('vozv-progress-bar').style.width  = pct + '%';
+
+  document.getElementById('vozv-cell-text').textContent = t.cell || '—';
+  document.getElementById('vozv-desc').textContent      = t.desc || '—';
+  const sku = String(t.sku || '');
+  document.getElementById('vozv-sku-text').textContent  = sku || '—';
+  ['vozv-cell', 'vozv-sku'].forEach(id => document.getElementById(id).classList.remove('copied'));
+  const wms = document.getElementById('vozv-wms-link');
+  wms.href = sku ? `https://wms.uzum.uz/information/product/${encodeURIComponent(sku)}` : '#';
+  const uz = document.getElementById('vozv-uzum-link');
+  if (t.productId) { uz.href = `https://uzum.uz/product/${encodeURIComponent(t.productId)}`; uz.style.display = 'flex'; }
+  else uz.style.display = 'none';
+
+  document.getElementById('vozv-category').textContent = t.category || '—';
+  document.getElementById('vozv-qty').textContent      = (t.qty || 1) + ' шт.';
+  document.getElementById('vozv-total').textContent    = formatSum(t.total);
+}
+
+function showVozvConfirm(result) {
+  const st = vozvState();
+  const t  = st.tasks[0];
+  if (!t || st.busy) return;
+  st.pending = result;
+  const isFound = result === 'Найден';
+  document.getElementById('vozvConfirmTitle').textContent = isFound ? 'Где нашли товар?' : 'Отметить товар как не найденный?';
+  document.getElementById('vozvConfirmLabel').textContent = isFound ? '✅ Найден' : '❌ Не найден';
+  document.getElementById('vozvFoundWrap').style.display = isFound ? 'block' : 'none';
+  if (isFound) {
+    const max = parseInt(t.qty, 10) || 1;
+    const qty = document.getElementById('vozvFoundQty');
+    qty.value = max; qty.max = max;
+    document.getElementById('vozvQtyMax').textContent = max;
+    const cell = document.getElementById('vozvFoundCell');
+    cell.value = '';
+    setTimeout(() => cell.focus(), 150);
+  }
+  document.getElementById('vozvConfirmOverlay').style.display = 'flex';
+}
+
+function hideVozvConfirm() {
+  vozvState().pending = null;
+  document.getElementById('vozvConfirmOverlay').style.display = 'none';
+}
+
+async function submitVozvResult() {
+  const st = vozvState();
+  const t = st.tasks[0], result = st.pending;
+  if (!t || !result || st.busy) return;
+  const isFound = result === 'Найден';
+  let foundCell = '', foundQty = 0;
+  if (isFound) {
+    const cellEl = document.getElementById('vozvFoundCell');
+    const qtyEl  = document.getElementById('vozvFoundQty');
+    const max    = parseInt(t.qty, 10) || 1;
+    foundCell = cellEl.value.trim();
+    foundQty  = parseInt(qtyEl.value, 10) || 0;
+    if (!foundCell) { highlightInvalidInput(cellEl); showError('Укажите ячейку, где нашли товар'); return; }
+    if (foundQty < 1 || foundQty > max) { highlightInvalidInput(qtyEl); showError(`Количество от 1 до ${max}`); return; }
+  }
+
+  st.busy = true;
+  showLoader('Сохранение...');
+  try {
+    const res = await apiPost({ action: 'logVozvResult', employeeId: state.employeeId, row: t.row, sku: t.sku, result, foundCell, foundQty });
+    if (!res.success) {
+      if (res.reassigned) {
+        hideVozvConfirm();
+        showError(res.error || 'Список обновлён');
+        st.busy = false; hideLoader();
+        await initVozvScreen();
+        return;
+      }
+      if (!res.alreadyDone) { showError(res.error || 'Ошибка сохранения'); return; }
+    }
+    hideVozvConfirm();
+    showSuccess(res.alreadyDone ? 'Уже было отмечено' : (isFound ? 'Найден — записано' : 'Не найден — записано'));
+    st.tasks.shift();
+    st.done++;
+    if (st.tasks.length) renderVozvTask();
+    else { setVozvState('done'); document.getElementById('vozv-done-desc').textContent = `Отработано: ${st.done}. Сообщите ведущему — он выдаст новые.`; }
+  } catch (err) {
+    console.error('[Vozv] submit error:', err);
+    showError('Ошибка подключения к серверу');
+  } finally {
+    st.busy = false;
+    hideLoader();
+  }
+}
+
+function setupVozvEventListeners() {
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+  on('btnVozv', () => { showScreen('vozv'); initVozvScreen(); });
+  on('btnBackFromVozv', () => showScreen('dashboard'));
+  on('btnVozvRefresh', initVozvScreen);
+  on('btnVozvEmptyRefresh', initVozvScreen);
+  on('btnVozvDoneRefresh', initVozvScreen);
+  on('btnVozvRetry', initVozvScreen);
+  on('vozvFound',    () => showVozvConfirm('Найден'));
+  on('vozvNotFound', () => showVozvConfirm('Не найден'));
+  on('btnVozvCancel',    hideVozvConfirm);
+  on('btnVozvConfirmOk', submitVozvResult);
+  on('vozv-cell', function () { copyText((vozvState().tasks[0] || {}).cell, this); });
+  on('vozv-sku',  function () { copyText((vozvState().tasks[0] || {}).sku, this); });
+  const qtyEl = document.getElementById('vozvFoundQty');
+  const step = d => { const max = parseInt(qtyEl.max, 10) || 1; qtyEl.value = Math.min(max, Math.max(1, (parseInt(qtyEl.value, 10) || 1) + d)); };
+  on('btnVozvQtyMinus', () => step(-1));
+  on('btnVozvQtyPlus',  () => step(1));
+  const overlay = document.getElementById('vozvConfirmOverlay');
+  if (overlay) overlay.addEventListener('click', e => { if (e.target === overlay) hideVozvConfirm(); });
+  const cellEl = document.getElementById('vozvFoundCell');
+  if (cellEl) cellEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submitVozvResult(); } });
 }

@@ -58,6 +58,10 @@ function doGet(e) {
       return handleGetFbsActTask(e.parameter.id);
     }
 
+    if (action === 'getVozvTasks') {
+      return handleGetVozvTasks(e.parameter.id);
+    }
+
     if (action === 'getFbsVycherkTask') {
       return handleGetFbsVycherkTask(e.parameter.id);
     }
@@ -105,6 +109,10 @@ function doPost(e) {
 
     if (data.action === 'releaseFbsAct') {
       return handleReleaseFbsAct(data);
+    }
+
+    if (data.action === 'logVozvResult') {
+      return handleLogVozvResult(data);
     }
 
     if (data.action === 'logFbsActBulk') {
@@ -162,10 +170,17 @@ function handleLogin(employeeId) {
         success: true,
         employee: {
           id:   rows[i][0],
-          name: rows[i][1]
+          name: rows[i][1],
+          role: 'staff'
         }
       });
     }
+  }
+
+  // Не сотрудник — ищем в «Помощниках» (видят только «Поиск вычерков (возвраты)»)
+  var helper = vozvFindHelper(ss, idStr);
+  if (helper) {
+    return jsonOk({ success: true, employee: { id: helper.id, name: helper.name, role: 'helper' } });
   }
 
   return jsonOk({ success: false, error: 'Сотрудник с ID «' + employeeId + '» не найден' });
@@ -861,6 +876,7 @@ function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('РАО')
     .addItem('Распределить миссинг', 'distributeMissingTasks')
+    .addItem('Распределить вычерки (возвраты)', 'distributeVozv')
     .addItem('Включить фоновое обновление (30 мин)', 'setup30MinTrigger')
     .addItem('Обновить сводную таблицу сейчас', 'updateSummarySheetManual')
     .addSeparator()
@@ -2377,4 +2393,389 @@ function handleLogFbsActBulk(data) {
   } finally {
     lock.releaseLock();
   }
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  ПОИСК ВЫЧЕРКОВ (ВОЗВРАТЫ) — проект с помощниками
+//  Лист данных:  «Вычерки возвратов» (загружается вручную)
+//  Лист людей:   «Помощники» — ID | ФИО | Склад | На смене
+//  Сводка:       «Сводка вычерков» (формулы, создаётся при распределении)
+//
+//  Распределение (меню «РАО»): ВСЕ строки без «Статуса» раздаются заново
+//  между помощниками с галочкой «На смене» в рамках своего склада.
+//  Уровни по «Цене всех товаров»: ≥1 млн → 500 тыс.–1 млн → <500 тыс.
+//  Внутри уровня — по ячейкам (натуральный порядок), нарезка на
+//  непрерывные участки с примерно равной суммой.
+//  Исполнитель и Порядок пишутся в лист; сотрудник видит один список.
+// ═══════════════════════════════════════════════════════════
+var SHEET_VOZV         = 'Вычерки возвратов';
+var SHEET_HELPERS      = 'Помощники';
+var SHEET_VOZV_SUMMARY = 'Сводка вычерков';
+var VOZV_RESULTS       = ['Найден', 'Не найден'];
+var VOZV_TIERS         = [1000000, 500000];   // границы уровней (сум)
+
+function vozvHeaders(sheet) {
+  return sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]
+    .map(function (h) { return String(h || '').toLowerCase().replace(/\s+/g, ' ').trim(); });
+}
+
+function vozvFind(headers, exact, prefixes) {
+  for (var e = 0; e < exact.length; e++) {
+    var i = headers.indexOf(exact[e]);
+    if (i >= 0) return i;
+  }
+  for (var k = 0; k < headers.length; k++) {
+    for (var p = 0; p < (prefixes || []).length; p++) {
+      if (headers[k].indexOf(prefixes[p]) === 0) return k;
+    }
+  }
+  return -1;
+}
+
+/** Колонки «Вычерков возвратов»; при ensure=true добавляет «Исполнитель» и «Порядок» в конец. */
+function vozvColumns(sheet, ensure) {
+  var h = vozvHeaders(sheet);
+  var cols = {
+    sku:       vozvFind(h, ['шк'], []),
+    price:     vozvFind(h, ['цена продажи'], ['цена прод']),
+    total:     vozvFind(h, ['цена всех товаров'], ['цена всех']),
+    desc:      vozvFind(h, ['описание'], []),
+    qty:       vozvFind(h, ['товаров'], []),
+    warehouse: vozvFind(h, ['склад'], []),
+    cell:      vozvFind(h, ['key', 'ячейка'], []),
+    date:      vozvFind(h, ['дата миссинга'], ['дата мисс']),
+    worker:    vozvFind(h, [], ['фио сотрудник']),
+    category:  vozvFind(h, ['l1_title', 'категория'], []),
+    productId: vozvFind(h, ['product_id'], ['product']),
+    status:    vozvFind(h, ['статус'], []),
+    searcher:  vozvFind(h, ['сотрудник поиска'], ['сотрудник пои']),
+    searchAt:  vozvFind(h, ['дата поиска'], ['дата пои']),
+    foundCell: vozvFind(h, ['ячейка где нашли', 'ячейка где найдено'], ['ячейка где']),
+    foundQty:  vozvFind(h, ['найдено'], []),
+    foundSum:  vozvFind(h, ['сумма найдено', 'сумма найденного'], ['сумма найд']),
+    assignee:  vozvFind(h, ['исполнитель'], []),
+    order:     vozvFind(h, ['порядок'], [])
+  };
+  if (ensure) {
+    var lastCol = sheet.getLastColumn();
+    if (cols.assignee < 0) { sheet.getRange(1, ++lastCol).setValue('Исполнитель'); cols.assignee = lastCol - 1; }
+    if (cols.order    < 0) { sheet.getRange(1, ++lastCol).setValue('Порядок');     cols.order    = lastCol - 1; }
+  }
+  return cols;
+}
+
+function vozvMissingCols(cols) {
+  var need = { sku: 'ШК', total: 'Цена всех товаров', warehouse: 'Склад', cell: 'key', status: 'Статус',
+               searcher: 'Сотрудник поиска', searchAt: 'Дата поиска', foundCell: 'Ячейка где нашли',
+               foundQty: 'Найдено', foundSum: 'Сумма найдено' };
+  var miss = [];
+  for (var k in need) if (cols[k] < 0) miss.push(need[k]);
+  return miss;
+}
+
+function vozvNorm(v) { return String(v === null || v === undefined ? '' : v).trim().toLowerCase().replace(/\s+/g, ' '); }
+function vozvNum(v) {
+  if (typeof v === 'number') return v;
+  var n = parseFloat(String(v || '').replace(/\s/g, '').replace(',', '.'));
+  return isNaN(n) ? 0 : n;
+}
+function vozvText(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number') return String(Math.round(v));
+  if (v instanceof Date) return Utilities.formatDate(v, 'Asia/Tashkent', 'dd.MM.yyyy HH:mm');
+  return String(v).trim();
+}
+
+/** Натуральное сравнение ячеек: SN1.9.2 < SN1.10.1 */
+function vozvCellCompare(a, b) {
+  var ta = String(a || '').toUpperCase().match(/\d+|\D+/g) || [];
+  var tb = String(b || '').toUpperCase().match(/\d+|\D+/g) || [];
+  for (var i = 0; i < Math.max(ta.length, tb.length); i++) {
+    var x = ta[i], y = tb[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    var nx = /^\d+$/.test(x), ny = /^\d+$/.test(y);
+    if (nx && ny) { var d = parseInt(x, 10) - parseInt(y, 10); if (d) return d; }
+    else if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+/** Помощники: [{ id, name, warehouse, onShift }] */
+function vozvReadHelpers(ss) {
+  var sh = ss.getSheetByName(SHEET_HELPERS);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var h = vozvHeaders(sh);
+  var cId = vozvFind(h, ['id', 'id (wms)', 'wms id', 'ид'], ['id']);
+  var cName = vozvFind(h, ['фио'], ['фио']);
+  var cWh = vozvFind(h, ['склад'], []);
+  var cOn = vozvFind(h, ['на смене'], ['на смен']);
+  if (cId < 0) cId = 0;
+  if (cName < 0) cName = 1;
+  if (cWh < 0) cWh = 2;
+  if (cOn < 0) cOn = 3;
+  var data = sh.getRange(2, 1, sh.getLastRow() - 1, sh.getLastColumn()).getValues();
+  var out = [];
+  data.forEach(function (r) {
+    var id = String(r[cId] === undefined ? '' : r[cId]).trim();
+    var name = String(r[cName] || '').trim();
+    if (!id || !name) return;
+    out.push({ id: id, name: name, warehouse: String(r[cWh] || '').trim(),
+               onShift: r[cOn] === true || String(r[cOn]).toUpperCase() === 'TRUE' });
+  });
+  return out;
+}
+
+function vozvFindHelper(ss, id) {
+  var list = vozvReadHelpers(ss);
+  for (var i = 0; i < list.length; i++) if (list[i].id === String(id).trim()) return list[i];
+  return null;
+}
+
+/** Имя, под которым человек получает задачи: ФИО из «Помощников», иначе из «Сотрудников». */
+function vozvResolveName(ss, id) {
+  var h = vozvFindHelper(ss, id);
+  if (h) return h.name;
+  return getEmployeeNameById(ss, id);
+}
+
+// ─── Распределение (меню) ───────────────────────────────────
+function distributeVozv() {
+  var ui = SpreadsheetApp.getUi();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(SHEET_VOZV);
+  if (!sheet || sheet.getLastRow() < 2) { ui.alert('Лист «' + SHEET_VOZV + '» не найден или пуст.'); return; }
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) { ui.alert('Скрипт занят, попробуйте через минуту.'); return; }
+  try {
+    var cols = vozvColumns(sheet, true);
+    var miss = vozvMissingCols(cols);
+    if (miss.length) { ui.alert('В «' + SHEET_VOZV + '» нет колонок: ' + miss.join(', ')); return; }
+
+    var helpers = vozvReadHelpers(ss).filter(function (x) { return x.onShift; });
+    if (!helpers.length) { ui.alert('В листе «' + SHEET_HELPERS + '» никто не отмечен «На смене».'); return; }
+
+    var byWh = {};   // склад → [helper]
+    helpers.forEach(function (x) {
+      var k = vozvNorm(x.warehouse);
+      (byWh[k] = byWh[k] || []).push({ name: x.name, warehouse: x.warehouse, sum: 0, count: 0, seq: 0 });
+    });
+
+    var lastRow = sheet.getLastRow();
+    var data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+    var assignCol = data.map(function (r) { return [r[cols.assignee]]; });
+    var orderCol  = data.map(function (r) { return [r[cols.order]]; });
+
+    // Все строки без статуса — в пул, назначения у них сбрасываются
+    var pool = {};   // склад → [{ i, total, cell }]
+    var noHelpers = {};
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      if (!vozvText(r[cols.sku]) || vozvText(r[cols.status])) continue;
+      assignCol[i][0] = '';
+      orderCol[i][0]  = '';
+      var wk = vozvNorm(r[cols.warehouse]);
+      if (!byWh[wk]) { noHelpers[r[cols.warehouse] || '(пусто)'] = (noHelpers[r[cols.warehouse] || '(пусто)'] || 0) + 1; continue; }
+      (pool[wk] = pool[wk] || []).push({ i: i, total: vozvNum(r[cols.total]), cell: vozvText(r[cols.cell]) });
+    }
+
+    var report = [];
+    Object.keys(pool).forEach(function (wk) {
+      var people = byWh[wk];
+      var items  = pool[wk];
+      var tiers = [[], [], []];
+      items.forEach(function (it) {
+        tiers[it.total >= VOZV_TIERS[0] ? 0 : it.total >= VOZV_TIERS[1] ? 1 : 2].push(it);
+      });
+
+      tiers.forEach(function (list) {
+        if (!list.length) return;
+        list.sort(function (a, b) { return vozvCellCompare(a.cell, b.cell) || (b.total - a.total); });
+        var tierSum = list.reduce(function (s, it) { return s + it.total; }, 0);
+        var n = people.length;
+        var acc = 0, p = 0;
+        for (var j = 0; j < list.length; j++) {
+          var it = list[j];
+          // Переходим к следующему, когда накопленная сумма перевалила его границу (и людей ещё хватает)
+          while (p < n - 1 && acc >= tierSum * (p + 1) / n) p++;
+          var person = people[p];
+          person.seq++;
+          person.count++;
+          person.sum += it.total;
+          assignCol[it.i][0] = person.name;
+          orderCol[it.i][0]  = person.seq;
+          acc += it.total;
+        }
+      });
+
+      report.push('📦 ' + people[0].warehouse + ': ' + items.length + ' поз., ' + people.length + ' чел.\n' +
+        people.map(function (x) { return '   • ' + x.name + ': ' + x.count + ' поз. / ' + Math.round(x.sum).toLocaleString() + ' сум'; }).join('\n'));
+    });
+
+    sheet.getRange(2, cols.assignee + 1, assignCol.length, 1).setValues(assignCol);
+    sheet.getRange(2, cols.order + 1, orderCol.length, 1).setValues(orderCol);
+    SpreadsheetApp.flush();
+
+    buildVozvSummary(ss, sheet, cols, helpers);
+
+    var extra = Object.keys(noHelpers).length
+      ? '\n\n⚠️ Без помощников на смене (не распределено): ' + Object.keys(noHelpers).map(function (k) { return k + ' — ' + noHelpers[k]; }).join(', ')
+      : '';
+    ui.alert('✅ Вычерки распределены\n\n' + (report.join('\n\n') || 'Нет позиций без статуса.') + extra);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function vozvColLetter(idx) {   // 0-based → A, B, ..., AA
+  var s = '', n = idx + 1;
+  while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+
+/** Лист «Сводка вычерков» на формулах (живой, без нагрузки на скрипт). */
+function buildVozvSummary(ss, dataSheet, cols, helpers) {
+  var sh = ss.getSheetByName(SHEET_VOZV_SUMMARY) || ss.insertSheet(SHEET_VOZV_SUMMARY);
+  sh.clear();
+  var q = "'" + SHEET_VOZV + "'!";
+  var A = q + '$' + vozvColLetter(cols.assignee) + ':$' + vozvColLetter(cols.assignee);
+  var S = q + '$' + vozvColLetter(cols.status)   + ':$' + vozvColLetter(cols.status);
+  var T = q + '$' + vozvColLetter(cols.total)    + ':$' + vozvColLetter(cols.total);
+  var F = q + '$' + vozvColLetter(cols.foundSum) + ':$' + vozvColLetter(cols.foundSum);
+
+  var head = ['Склад', 'Помощник', 'Назначено, шт', 'Назначено, сум', 'Отработано, шт', 'Найдено, шт',
+              'Не найдено, шт', 'Найдено, сум', 'Осталось, шт', '% отработки'];
+  var rows = [head];
+  var sorted = helpers.slice().sort(function (a, b) {
+    return a.warehouse.localeCompare(b.warehouse) || a.name.localeCompare(b.name);
+  });
+  sorted.forEach(function (x, k) {
+    var r = k + 2;
+    rows.push([x.warehouse, x.name,
+      '=COUNTIFS(' + A + ';$B' + r + ')',
+      '=SUMIFS(' + T + ';' + A + ';$B' + r + ')',
+      '=COUNTIFS(' + A + ';$B' + r + ';' + S + ';"<>")',
+      '=COUNTIFS(' + A + ';$B' + r + ';' + S + ';"Найден")',
+      '=COUNTIFS(' + A + ';$B' + r + ';' + S + ';"Не найден")',
+      '=SUMIFS(' + F + ';' + A + ';$B' + r + ')',
+      '=C' + r + '-E' + r,
+      '=IFERROR(E' + r + '/C' + r + ';0)']);
+  });
+  var last = rows.length;
+  // Итоги по складам
+  var whs = [];
+  sorted.forEach(function (x) { if (whs.indexOf(x.warehouse) < 0) whs.push(x.warehouse); });
+  rows.push(['', '', '', '', '', '', '', '', '', '']);
+  whs.concat(['ВСЕГО']).forEach(function (w) {
+    var r = rows.length + 1;
+    var crit = w === 'ВСЕГО' ? null : '"' + w.replace(/"/g, '""') + '"';
+    function agg(col) {
+      var rng = col + '2:' + col + last;
+      return crit ? '=SUMIFS(' + rng + ';$A$2:$A$' + last + ';' + crit + ')' : '=SUM(' + rng + ')';
+    }
+    rows.push([w === 'ВСЕГО' ? 'ВСЕГО' : w, 'Итого по складу',
+      agg('C'), agg('D'), agg('E'), agg('F'), agg('G'), agg('H'), agg('I'),
+      '=IFERROR(E' + r + '/C' + r + ';0)']);
+  });
+
+  // Apps Script принимает формулы в английском синтаксисе (разделитель «,») при любой локали таблицы
+  rows = rows.map(function (r) { return r.map(function (v) { return typeof v === 'string' && v[0] === '=' ? v.replace(/;/g, ',') : v; }); });
+
+  sh.getRange(1, 1, rows.length, head.length).setValues(rows);
+  sh.getRange(1, 1, 1, head.length).setFontWeight('bold').setBackground('#4c1d95').setFontColor('#ffffff');
+  sh.getRange(2, 4, rows.length - 1, 1).setNumberFormat('#,##0');
+  sh.getRange(2, 8, rows.length - 1, 1).setNumberFormat('#,##0');
+  sh.getRange(2, 10, rows.length - 1, 1).setNumberFormat('0%');
+  sh.getRange(last + 2, 1, whs.length + 1, head.length).setFontWeight('bold').setBackground('#ede9fe');
+  sh.setFrozenRows(1);
+  sh.autoResizeColumns(1, head.length);
+}
+
+// ─── Выдача списка сотруднику ──────────────────────────────
+function handleGetVozvTasks(employeeId) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var name = vozvResolveName(ss, employeeId);
+  if (!name) return jsonOk({ success: false, error: 'Сотрудник не найден' });
+  var sheet = ss.getSheetByName(SHEET_VOZV);
+  if (!sheet || sheet.getLastRow() < 2) return jsonOk({ success: true, tasks: [], done: 0, name: name });
+  var cols = vozvColumns(sheet, false);
+  if (cols.assignee < 0) return jsonOk({ success: true, tasks: [], done: 0, name: name });
+  var miss = vozvMissingCols(cols);
+  if (miss.length) return jsonOk({ success: false, error: 'В «' + SHEET_VOZV + '» нет колонок: ' + miss.join(', ') });
+
+  var data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
+  var me = vozvNorm(name);
+  var tasks = [], done = 0;
+  function g(r, c) { return c >= 0 ? r[c] : ''; }
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    if (vozvNorm(r[cols.assignee]) !== me) continue;
+    if (vozvText(r[cols.status])) { done++; continue; }
+    tasks.push({
+      row:       i + 2,
+      order:     vozvNum(r[cols.order]),
+      sku:       vozvText(r[cols.sku]),
+      desc:      vozvText(g(r, cols.desc)),
+      qty:       parseInt(g(r, cols.qty), 10) || 1,
+      price:     vozvNum(g(r, cols.price)),
+      total:     vozvNum(r[cols.total]),
+      cell:      vozvText(r[cols.cell]),
+      category:  vozvText(g(r, cols.category)),
+      productId: vozvText(g(r, cols.productId)),
+      date:      vozvText(g(r, cols.date))
+    });
+  }
+  tasks.sort(function (a, b) { return a.order - b.order; });
+  return jsonOk({ success: true, tasks: tasks, done: done, name: name });
+}
+
+// ─── Запись результата (без общей блокировки: строки закреплены за людьми) ───
+function handleLogVozvResult(data) {
+  var result = String(data.result || '').trim();
+  if (VOZV_RESULTS.indexOf(result) < 0) return jsonOk({ success: false, error: 'Неизвестный результат' });
+  var isFound   = result === 'Найден';
+  var foundCell = String(data.foundCell || '').trim();
+  var foundQty  = parseInt(data.foundQty, 10) || 0;
+  if (isFound && (!foundCell || foundQty < 1)) return jsonOk({ success: false, error: 'Укажите ячейку и количество' });
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var name = vozvResolveName(ss, data.employeeId);
+  if (!name) return jsonOk({ success: false, error: 'Сотрудник не найден' });
+  var sheet = ss.getSheetByName(SHEET_VOZV);
+  if (!sheet) return jsonOk({ success: false, error: 'Лист «' + SHEET_VOZV + '» не найден' });
+  var cols = vozvColumns(sheet, false);
+
+  var rowNum = parseInt(data.row, 10) || 0;
+  if (rowNum < 2 || rowNum > sheet.getLastRow()) return jsonOk({ success: false, reassigned: true, error: 'Список обновлён' });
+  var lastCol = sheet.getLastColumn();
+  var r = sheet.getRange(rowNum, 1, 1, lastCol).getValues()[0];
+
+  if (vozvText(r[cols.sku]) !== String(data.sku || '').trim() || vozvNorm(r[cols.assignee]) !== vozvNorm(name)) {
+    return jsonOk({ success: false, reassigned: true, error: 'Позиция передана другому — список обновлён' });
+  }
+  if (vozvText(r[cols.status])) return jsonOk({ success: false, alreadyDone: true, error: 'Позиция уже отмечена' });
+
+  var qty = parseInt(r[cols.qty], 10) || 1;
+  if (isFound && foundQty > qty) return jsonOk({ success: false, error: 'Найдено больше, чем вычеркнуто (' + qty + ')' });
+  var price = cols.price >= 0 ? vozvNum(r[cols.price]) : (vozvNum(r[cols.total]) / qty);
+  var qtyOut = isFound ? foundQty : 0;
+
+  // Одна запись: диапазон колонок результата целиком (значения между ними сохраняются как были)
+  var set = {};
+  set[cols.status]    = result;
+  set[cols.searcher]  = name;
+  set[cols.searchAt]  = new Date();
+  set[cols.foundCell] = isFound ? foundCell : '';
+  set[cols.foundQty]  = qtyOut;
+  set[cols.foundSum]  = qtyOut * price;
+  var idx = Object.keys(set).map(Number);
+  var c0 = Math.min.apply(null, idx), c1 = Math.max.apply(null, idx);
+  var seg = r.slice(c0, c1 + 1);
+  idx.forEach(function (c) { seg[c - c0] = set[c]; });
+  sheet.getRange(rowNum, c0 + 1, 1, seg.length).setValues([seg]);
+  sheet.getRange(rowNum, cols.searchAt + 1).setNumberFormat('dd.MM.yyyy HH:mm:ss');
+
+  return jsonOk({ success: true });
 }

@@ -234,6 +234,21 @@
           </div>
         </button>
 
+        <button class="work-card" id="btnVozv" data-type="vozv">
+          <div class="work-card-icon icon-vozv">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="m9 12 2 2 4-4"/>
+            </svg>
+          </div>
+          <div class="work-card-body">
+            <div class="work-card-title">Поиск вычерков (возвраты)</div>
+            <div class="work-card-desc">Поиск вычеркнутых товаров с возвратных актов</div>
+          </div>
+          <div class="work-card-chevron">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
+          </div>
+        </button>
+
       </div>
 
       <button class="btn btn-ghost" id="btnLogout" style="margin-top: auto; flex-shrink: 0;">
@@ -1063,6 +1078,128 @@
       </div>
     </main>
 
+
+    <!-- SCREEN 4e: ПОИСК ВЫЧЕРКОВ (ВОЗВРАТЫ) -->
+    <main class="screen" id="screen-vozv">
+      <div class="work-screen-header">
+        <button class="back-btn" id="btnBackFromVozv" aria-label="Назад">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <span class="work-tag tag-vozv">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+          Вычерки (возвраты)
+        </span>
+        <button class="btn-icon-refresh" id="btnVozvRefresh" title="Обновить список" style="margin-left:auto;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38"/></svg>
+        </button>
+      </div>
+
+      <div id="vozv-loading" class="missing-state">
+        <div class="spinner spinner-sm"></div>
+        <span class="missing-state-hint">Загрузка списка...</span>
+      </div>
+
+      <div id="vozv-empty" class="missing-state" style="display:none;">
+        <div class="placeholder-icon-wrap" style="background: rgba(167, 139, 250, 0.12); color: #a78bfa;">
+          <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+        </div>
+        <h3 class="placeholder-title" id="vozv-empty-title">Позиций для вас нет</h3>
+        <p class="placeholder-desc" id="vozv-empty-desc">Ведущий ещё не распределил позиции. Обновите список чуть позже.</p>
+        <button class="btn btn-ghost" id="btnVozvEmptyRefresh" style="width:100%;margin-top:6px;">Обновить</button>
+      </div>
+
+      <div id="vozv-error" class="missing-state" style="display:none;">
+        <div style="font-size:2.8rem;margin-bottom:6px;">⚠️</div>
+        <h3 class="placeholder-title" style="font-size:1.1rem;">Ошибка загрузки</h3>
+        <p class="placeholder-desc" id="vozv-error-msg">Проверьте подключение к интернету</p>
+        <button class="btn btn-ghost" id="btnVozvRetry" style="width:100%;margin-top:6px;">Попробовать снова</button>
+      </div>
+
+      <div id="vozv-task" class="missing-tasks-wrap" style="display:none;">
+        <div class="task-progress">
+          <div class="task-progress-labels">
+            <span id="vozv-progress-text">Позиция 1 из 1</span>
+            <span id="vozv-progress-pct">0%</span>
+          </div>
+          <div class="progress-track"><div class="progress-fill vozv-fill" id="vozv-progress-bar"></div></div>
+        </div>
+
+        <div id="vozv-card-view">
+          <div class="vozv-cell-head">
+            <div class="vozv-cell-label">Ячейка</div>
+            <button class="copy-btn monospace vozv-cell-btn" id="vozv-cell" title="Нажмите для копирования">
+              <span class="copy-val" id="vozv-cell-text">—</span>
+              <svg class="copy-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </div>
+
+          <div class="task-card-missing">
+            <div class="task-name" id="vozv-desc">—</div>
+            <div class="task-info-grid">
+              <div class="info-row">
+                <span class="info-key">ШК</span>
+                <div class="info-val-group">
+                  <button class="copy-btn monospace" id="vozv-sku" title="Нажмите для копирования">
+                    <span class="copy-val" id="vozv-sku-text">—</span>
+                    <svg class="copy-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                  <a href="#" target="_blank" rel="noopener" class="wms-btn" id="vozv-wms-link" title="Открыть товар в WMS">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+                    WMS
+                  </a>
+                </div>
+              </div>
+              <div class="info-row"><span class="info-key">Категория</span><span class="info-val" id="vozv-category">—</span></div>
+              <div class="info-row"><span class="info-key">Кол-во</span><span class="info-val" id="vozv-qty">—</span></div>
+              <div class="info-row info-row-price"><span class="info-key">Сумма</span><span class="info-val info-val-price" id="vozv-total">—</span></div>
+            </div>
+            <a href="#" target="_blank" rel="noopener" class="btn-uzum-product" id="vozv-uzum-link" style="display:none; margin-top:12px;">
+              <span>🛍️ Показать товар на Uzum.uz</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>
+            </a>
+          </div>
+
+          <div class="result-grid">
+            <button class="result-btn btn-found"    id="vozvFound">✅ Найден</button>
+            <button class="result-btn btn-notfound" id="vozvNotFound">❌ Не найден</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="vozv-done" class="missing-state" style="display:none;">
+        <div style="font-size:3.8rem;margin-bottom:6px;">🎉</div>
+        <h3 class="placeholder-title">Все позиции обработаны!</h3>
+        <p class="placeholder-desc" id="vozv-done-desc">Сообщите ведущему — он выдаст новые.</p>
+        <button class="btn btn-ghost" id="btnVozvDoneRefresh" style="width:100%;margin-top:6px;">Проверить новые</button>
+      </div>
+
+      <div class="bottom-sheet-overlay" id="vozvConfirmOverlay" style="display:none;">
+        <div class="bottom-sheet">
+          <div class="confirm-handle"></div>
+          <div class="confirm-title" id="vozvConfirmTitle">Подтвердите результат</div>
+          <div class="confirm-result-label" id="vozvConfirmLabel">—</div>
+          <div class="confirm-found-details" id="vozvFoundWrap" style="display:none;">
+            <div class="confirm-field-group">
+              <label class="confirm-field-label" for="vozvFoundCell">Где нашли (ячейка):</label>
+              <input type="text" class="confirm-text-input monospace" id="vozvFoundCell" placeholder="SN1.12.28.3.7" autocomplete="off">
+            </div>
+            <div class="confirm-field-group" style="margin-top: 12px;">
+              <label class="confirm-field-label">Найденное количество:</label>
+              <div class="confirm-qty-controls">
+                <button type="button" class="qty-btn" id="btnVozvQtyMinus">−</button>
+                <input type="number" class="qty-input" id="vozvFoundQty" min="1" value="1">
+                <button type="button" class="qty-btn" id="btnVozvQtyPlus">+</button>
+              </div>
+              <div class="confirm-qty-max-hint">Из <span id="vozvQtyMax">1</span> шт. вычеркнуто</div>
+            </div>
+          </div>
+          <div class="confirm-buttons">
+            <button class="confirm-btn-cancel" id="btnVozvCancel">Отменить</button>
+            <button class="confirm-btn-ok" id="btnVozvConfirmOk">✓ Подтвердить</button>
+          </div>
+        </div>
+      </div>
+    </main>
   </div>
 
   <script src="app.js"></script>
