@@ -2036,6 +2036,21 @@ function renderFbsActTask() {
   const left = document.getElementById('fbsacts-acts-left');
   if (left) left.textContent = st.actsLeft ? `В очереди ещё актов: ${st.actsLeft}` : 'Последний акт в очереди';
 
+  // ГМ — уникальные номера по всем позициям акта
+  const gmEl = document.getElementById('fbsacts-gm');
+  if (gmEl) {
+    gmEl.innerHTML = '';
+    const gms = [...new Set(st.rows.map(r => String(r.gm || '').trim()).filter(Boolean))].sort();
+    if (gms.length) {
+      const lbl = document.createElement('div');
+      lbl.className = 'fbs-act-gm-label';
+      lbl.textContent = gms.length > 1 ? `ГМ (${gms.length})` : 'ГМ';
+      gmEl.appendChild(lbl);
+      gms.forEach(g => gmEl.appendChild(makeCopyChip(g)));
+    }
+  }
+  renderFbsActItems();
+
   // Прогресс внутри акта
   const num = st.done + 1;
   const pct = st.total ? Math.round((st.done / st.total) * 100) : 0;
@@ -2074,11 +2089,72 @@ function renderFbsActTask() {
   document.getElementById('fbsacts-request').textContent = row.request || '—';
 }
 
+// Список позиций акта (кнопка «Подробности»)
+function renderFbsActItems() {
+  const st = fbsActsState();
+  const box = document.getElementById('fbsActItems');
+  if (!box) return;
+  box.innerHTML = '';
+  st.rows.forEach((r, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'fbs-act-item' + (i === 0 ? ' current' : '');
+    const sku = document.createElement('span'); sku.className = 'fbs-act-item-sku'; sku.textContent = r.sku || '—';
+    const qty = document.createElement('span'); qty.className = 'fbs-act-item-qty'; qty.textContent = (r.qty || 1) + ' шт.';
+    const desc = document.createElement('span'); desc.className = 'fbs-act-item-desc'; desc.textContent = r.desc || 'Без описания';
+    b.append(sku, qty, desc);
+    b.addEventListener('click', () => selectFbsActRow(i));
+    box.appendChild(b);
+  });
+  const lbl = document.getElementById('fbsActDetailsLabel');
+  if (lbl) lbl.textContent = `Подробности · ${st.rows.length} поз.`;
+}
+
+function toggleFbsActDetails(force) {
+  const box = document.getElementById('fbsActItems');
+  const btn = document.getElementById('fbsActDetailsBtn');
+  if (!box || !btn) return;
+  const open = typeof force === 'boolean' ? force : box.style.display === 'none';
+  box.style.display = open ? 'flex' : 'none';
+  btn.classList.toggle('open', open);
+}
+
+// Выбор позиции из списка: она становится текущей, порядок остальных сохраняется
+function selectFbsActRow(i) {
+  const st = fbsActsState();
+  if (st.busy || i <= 0 || i >= st.rows.length) { toggleFbsActDetails(false); return; }
+  const [row] = st.rows.splice(i, 1);
+  st.rows.unshift(row);
+  toggleFbsActDetails(false);
+  renderFbsActTask();
+}
+
 function showFbsActConfirm(result) {
   const st  = fbsActsState();
   const row = st.rows[0];
   if (!row || st.busy) return;
   st.pending = result;
+
+  const qtyGroup = document.getElementById('fbsActQtyGroup');
+  if (qtyGroup) qtyGroup.style.display = '';
+
+  if (result === 'actFound' || result === 'actNotFound') {
+    const n = st.rows.length;
+    const found = result === 'actFound';
+    document.getElementById('fbsActConfirmTitle').textContent = found
+      ? `Отметить весь акт найденным? Позиций: ${n}. Где нашли акт?`
+      : `Отметить весь акт как не найденный? Позиций: ${n}`;
+    document.getElementById('fbsActConfirmLabel').textContent = (found ? '✅ Акт найден · ' : '❌ Акт не найден · ') + st.act;
+    document.getElementById('fbsActFoundWrap').style.display = found ? 'block' : 'none';
+    if (qtyGroup) qtyGroup.style.display = 'none';
+    if (found) {
+      const cell = document.getElementById('fbsActFoundCell');
+      cell.value = '';
+      setTimeout(() => cell.focus(), 150);
+    }
+    document.getElementById('fbsActConfirmOverlay').style.display = 'flex';
+    return;
+  }
 
   if (result === 'skipAct') {
     document.getElementById('fbsActConfirmTitle').textContent = 'Пропустить акт целиком?';
@@ -2120,6 +2196,7 @@ async function submitFbsActResult() {
   const result = st.pending;
   if (!row || !result || st.busy) return;
   if (result === 'skipAct') return submitFbsSkipAct();
+  if (result === 'actFound' || result === 'actNotFound') return submitFbsActBulk(result === 'actFound');
 
   const isFound = result === 'Найден';
   let foundCell = '', foundQty = 0;
@@ -2189,6 +2266,37 @@ function skipFbsActPosition() {
   renderFbsActTask();
 }
 
+async function submitFbsActBulk(isFound) {
+  const st = fbsActsState();
+  if (!st.act || st.busy) return;
+  let foundCell = '';
+  if (isFound) {
+    const cellEl = document.getElementById('fbsActFoundCell');
+    foundCell = cellEl.value.trim();
+    if (!foundCell) { highlightInvalidInput(cellEl); showError('Укажите ячейку, где нашли акт'); return; }
+  }
+  st.busy = true;
+  showLoader('Сохранение акта...');
+  try {
+    const res = await apiPost({
+      action: 'logFbsActBulk', employeeId: state.employeeId, act: st.act,
+      result: isFound ? 'Найден' : 'Не найден', foundCell
+    });
+    if (!res.success) { showError(res.error || 'Ошибка сохранения'); return; }
+    hideFbsActConfirm();
+    showSuccess(`Акт ${st.act}: ${isFound ? 'найден' : 'не найден'} · позиций ${res.marked || 0}`);
+    st.act = null; st.rows = [];
+    st.busy = false;
+    await initFbsActsScreen();
+  } catch (err) {
+    console.error('[FBS acts] bulk error:', err);
+    showError('Ошибка подключения к серверу');
+  } finally {
+    st.busy = false;
+    hideLoader();
+  }
+}
+
 async function submitFbsSkipAct() {
   const st = fbsActsState();
   if (!st.act || st.busy) return;
@@ -2225,6 +2333,9 @@ function setupFbsActsEventListeners() {
   on('fbsActFound',    () => showFbsActConfirm('Найден'));
   on('fbsActSkipPos',  skipFbsActPosition);
   on('fbsActSkipAct',  () => showFbsActConfirm('skipAct'));
+  on('fbsActBulkFound',    () => showFbsActConfirm('actFound'));
+  on('fbsActBulkNotFound', () => showFbsActConfirm('actNotFound'));
+  on('fbsActDetailsBtn',   () => toggleFbsActDetails());
   on('fbsActNotFound', () => showFbsActConfirm('Не найден'));
   on('btnFbsActCancel',    hideFbsActConfirm);
   on('btnFbsActConfirmOk', submitFbsActResult);

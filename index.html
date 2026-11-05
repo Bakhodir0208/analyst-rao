@@ -839,7 +839,19 @@
               <span class="copy-val" id="fbsacts-act-text">—</span>
               <svg class="copy-icon-svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
             </button>
+            <div class="fbs-act-gm" id="fbsacts-gm"></div>
             <div class="fbs-act-meta" id="fbsacts-acts-left">—</div>
+            <button type="button" class="fbs-act-details-btn" id="fbsActDetailsBtn">
+              <span id="fbsActDetailsLabel">Подробности</span>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div class="fbs-act-items" id="fbsActItems" style="display:none;"></div>
+          </div>
+
+          <!-- Отметить весь акт -->
+          <div class="fbs-act-bulk">
+            <button type="button" class="fbs-bulk-btn fbs-bulk-found"    id="fbsActBulkFound">✅ Акт найден</button>
+            <button type="button" class="fbs-bulk-btn fbs-bulk-notfound" id="fbsActBulkNotFound">❌ Акт не найден</button>
           </div>
 
           <!-- Прогресс по позициям акта -->
@@ -899,8 +911,8 @@
             </div>
 
             <div class="fbs-skip-row">
-              <button type="button" class="fbs-skip-btn" id="fbsActSkipPos">⏭ Пропустить позицию</button>
-              <button type="button" class="fbs-skip-btn fbs-skip-btn-act" id="fbsActSkipAct">⏩ Пропустить акт</button>
+              <button type="button" class="fbs-skip-btn" id="fbsActSkipPos">Пропустить позицию</button>
+              <button type="button" class="fbs-skip-btn fbs-skip-btn-act" id="fbsActSkipAct">Пропустить акт</button>
             </div>
           </div>
         </div>
@@ -917,7 +929,7 @@
                 <label class="confirm-field-label" for="fbsActFoundCell">Где нашли (ячейка):</label>
                 <input type="text" class="confirm-text-input monospace" id="fbsActFoundCell" placeholder="SN1.11.47.4.6" autocomplete="off">
               </div>
-              <div class="confirm-field-group" style="margin-top: 12px;">
+              <div class="confirm-field-group" id="fbsActQtyGroup" style="margin-top: 12px;">
                 <label class="confirm-field-label">Найденное количество:</label>
                 <div class="confirm-qty-controls">
                   <button type="button" class="qty-btn" id="btnFbsActQtyMinus">−</button>

@@ -2222,3 +2222,97 @@ body {
 .fbs-skip-btn:hover { color: var(--text); border-color: rgba(129,140,248,0.4); }
 .fbs-skip-btn:active { transform: scale(0.97); }
 .fbs-skip-btn-act { color: #fbbf24; border-color: rgba(251,191,36,0.35); }
+
+/* ── FBS: ГМ, подробности акта, массовая отметка ── */
+.fbs-act-gm {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.fbs-act-gm:empty { display: none; }
+.fbs-act-gm .copy-btn {
+  font-size: 0.78rem;
+  padding: 3px 8px;
+  background: rgba(8, 12, 21, 0.35);
+  border-color: rgba(56, 189, 248, 0.25);
+}
+.fbs-act-gm-label {
+  width: 100%;
+  text-align: center;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.fbs-act-details-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  background: transparent;
+  color: var(--fbs);
+  font-family: var(--font);
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.fbs-act-details-btn svg { transition: transform 0.2s ease; }
+.fbs-act-details-btn.open svg { transform: rotate(180deg); }
+.fbs-act-items {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.fbs-act-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(8, 12, 21, 0.4);
+  color: var(--text);
+  font-family: var(--font);
+  cursor: pointer;
+}
+.fbs-act-item:active { transform: scale(0.98); }
+.fbs-act-item.current { border-color: var(--fbs); background: rgba(56, 189, 248, 0.12); }
+.fbs-act-item-sku { font-family: 'Courier New', Courier, monospace; font-size: 0.8rem; font-weight: 700; }
+.fbs-act-item-qty { font-size: 0.78rem; font-weight: 800; color: var(--fbs); text-align: right; }
+.fbs-act-item-desc {
+  grid-column: 1 / -1;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fbs-act-bulk {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.fbs-bulk-btn {
+  height: 40px;
+  border-radius: 12px;
+  font-family: var(--font);
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+  background: transparent;
+  white-space: nowrap;
+}
+.fbs-bulk-btn:active { transform: scale(0.97); }
+.fbs-bulk-found    { color: #34d399; border: 1px solid rgba(52, 211, 153, 0.45); }
+.fbs-bulk-notfound { color: #f87171; border: 1px solid rgba(248, 113, 113, 0.45); }

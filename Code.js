@@ -107,6 +107,10 @@ function doPost(e) {
       return handleReleaseFbsAct(data);
     }
 
+    if (data.action === 'logFbsActBulk') {
+      return handleLogFbsActBulk(data);
+    }
+
     if (data.action === 'skipFbsAct') {
       return handleSkipFbsAct(data);
     }
@@ -1815,7 +1819,8 @@ function getFbsSearchColumns(sheet) {
     storage:   find('ячейка хранение акта', 'ячейка хранен'),
     status:    find('статус'),
     foundQty:  find('найдено'),
-    employee:  find('сотрудник аналитики', 'сотрудник')
+    employee:  find('сотрудник аналитики', 'сотрудник'),
+    gm:        find('гм', 'гм')
   };
 }
 
@@ -1869,7 +1874,8 @@ function readFbsPendingActs(sheet, cols) {
       cells:       cells,
       storageCell: cols.storage >= 0 ? fbsText(r[cols.storage]) : '',
       request:     cols.request >= 0 ? fbsText(r[cols.request]) : '',
-      date:        cols.date    >= 0 ? fbsFormatDate(r[cols.date]) : ''
+      date:        cols.date    >= 0 ? fbsFormatDate(r[cols.date]) : '',
+      gm:          cols.gm      >= 0 ? fbsText(r[cols.gm])      : ''
     });
   }
   return acts;
@@ -2322,4 +2328,53 @@ function handleSkipFbsActPos(data) {
   if (!employeeName) return jsonOk({ success: false, error: 'Сотрудник не найден' });
   fbsSkipAdd('POS', employeeName, fbsNorm(data.act) + '|' + fbsNorm(data.sku));
   return jsonOk({ success: true });
+}
+
+
+/**
+ * POST logFbsActBulk { employeeId, act, result: 'Найден'|'Не найден', foundCell }
+ * Отмечает разом ВСЕ необработанные позиции акта.
+ * «Найден»: Найдено = Количество для поиска, Найдено в ячейке = foundCell.
+ */
+function handleLogFbsActBulk(data) {
+  var result = String(data.result || '').trim();
+  if (FBS_ACT_RESULTS.indexOf(result) < 0) return jsonOk({ success: false, error: 'Неизвестный результат: ' + result });
+  if (!data.act) return jsonOk({ success: false, error: 'Неполные данные' });
+  var isFound   = result === 'Найден';
+  var foundCell = String(data.foundCell || '').trim();
+  if (isFound && !foundCell) return jsonOk({ success: false, error: 'Укажите ячейку, где нашли акт' });
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var employeeName = getEmployeeNameById(ss, data.employeeId);
+  if (!employeeName) return jsonOk({ success: false, error: 'Сотрудник не найден' });
+
+  var ctx = getFbsSearchSheet();
+  if (ctx.error) return jsonOk({ success: false, error: ctx.error });
+  var sheet = ctx.sheet, cols = ctx.cols;
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return jsonOk({ success: false, error: 'Сервер занят, попробуйте ещё раз' });
+  try {
+    var actKey  = fbsNorm(data.act);
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return jsonOk({ success: false, error: 'Лист пуст' });
+    var all = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+
+    var marked = 0;
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i];
+      if (fbsNorm(r[cols.act]) !== actKey || !fbsText(r[cols.sku]) || fbsText(r[cols.status])) continue;
+      var qty = cols.qty >= 0 ? (parseInt(r[cols.qty], 10) || 1) : 1;
+      var rowNum = i + 2;
+      sheet.getRange(rowNum, cols.status    + 1).setValue(result);
+      sheet.getRange(rowNum, cols.foundCell + 1).setValue(isFound ? foundCell : '');
+      sheet.getRange(rowNum, cols.foundQty  + 1).setValue(isFound ? qty : 0);
+      sheet.getRange(rowNum, cols.employee  + 1).setValue(employeeName);
+      marked++;
+    }
+    setFbsActLock(ctx.bpSs, employeeName, null);
+    return jsonOk({ success: true, marked: marked });
+  } finally {
+    lock.releaseLock();
+  }
 }
