@@ -2335,3 +2335,57 @@ body {
 body.role-helper .work-card:not([data-type="vozv"]) { display: none !important; }
 body.role-helper .plan-display { display: none !important; }
 body.role-helper .app-header.is-auth .app-brand { display: flex !important; }
+
+/* ── FBS акты: история и повторный поиск ── */
+.fbs-acts-toolbar { display: flex; justify-content: flex-end; margin-bottom: 10px; flex-shrink: 0; }
+.fbs-history-btn {
+  padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border);
+  background: rgba(255,255,255,0.04); color: var(--text-muted);
+  font-family: var(--font); font-size: 0.78rem; font-weight: 700; cursor: pointer;
+}
+.fbs-history-btn:hover { color: var(--text); }
+.fbs-history-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-shrink: 0; }
+.fbs-history-back {
+  padding: 6px 12px; border-radius: 10px; border: 1px solid var(--border);
+  background: transparent; color: var(--text); font-family: var(--font); font-weight: 700; font-size: 0.8rem; cursor: pointer;
+}
+.fbs-history-title { font-size: 0.85rem; font-weight: 800; color: var(--text-muted); }
+.fbs-history-filter { display: flex; gap: 6px; flex-shrink: 0; }
+.fbs-hf-btn {
+  flex: 1; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-muted); font-family: var(--font); font-size: 0.76rem; font-weight: 700; cursor: pointer;
+}
+.fbs-hf-btn.active { color: var(--fbs); border-color: var(--fbs); background: var(--fbs-subtle); }
+.fbs-history-list { display: flex; flex-direction: column; gap: 8px; }
+.fbs-hist-item {
+  text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border);
+  background: rgba(255,255,255,0.03); color: var(--text); font-family: var(--font);
+  display: grid; grid-template-columns: 1fr auto; gap: 3px 10px;
+}
+.fbs-hist-item.can-recheck { cursor: pointer; border-color: rgba(248,113,113,0.35); }
+.fbs-hist-item.can-recheck:active { transform: scale(0.98); }
+.fbs-hist-sku { font-family: 'Courier New', Courier, monospace; font-size: 0.82rem; font-weight: 700; }
+.fbs-hist-status { font-size: 0.72rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; align-self: start; }
+.fbs-hist-status.ok { color: #34d399; background: rgba(52,211,153,0.12); }
+.fbs-hist-status.no { color: #f87171; background: rgba(248,113,113,0.12); }
+.fbs-hist-desc { grid-column: 1 / -1; font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fbs-hist-meta { grid-column: 1 / -1; font-size: 0.72rem; color: var(--text-dim); }
+.fbs-hist-recheck { grid-column: 1 / -1; font-size: 0.74rem; font-weight: 800; color: #fbbf24; margin-top: 2px; }
+
+/* История по актам */
+.fbs-hact { border: 1px solid var(--border); border-radius: 12px; background: rgba(255,255,255,0.03); overflow: hidden; }
+.fbs-hact.has-nf { border-color: rgba(248,113,113,0.35); }
+.fbs-hact-head {
+  width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center;
+  padding: 10px 12px; background: transparent; border: none; color: var(--text); font-family: var(--font); text-align: left; cursor: pointer;
+}
+.fbs-hact-act { font-family: 'Courier New', Courier, monospace; font-size: 0.9rem; font-weight: 800; }
+.fbs-hact-storage { grid-column: 1 / -1; font-family: 'Courier New', Courier, monospace; font-size: 0.78rem; color: var(--text-muted); }
+.fbs-hact-body { flex-direction: column; gap: 6px; padding: 0 10px 10px; }
+.fbs-hact-pos {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; text-align: left;
+  padding: 8px 10px; border-radius: 10px; border: 1px dashed rgba(251,191,36,0.4);
+  background: rgba(8,12,21,0.4); color: var(--text); font-family: var(--font); cursor: pointer;
+}
+.fbs-hact-pos:active { transform: scale(0.98); }
+.fbs-hact-pos .fbs-hist-recheck { grid-column: auto; margin: 0; align-self: center; }

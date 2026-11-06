@@ -817,6 +817,25 @@
       <!-- 2. ПОД-ЭКРАН ПОИСК АКТОВ -->
       <div id="fbs-acts-view" class="fbs-subscreen fbs-acts-view" style="display: none;">
 
+        <!-- Панель: история -->
+        <div class="fbs-acts-toolbar" id="fbsActsToolbar">
+          <button type="button" class="fbs-history-btn" id="btnFbsActsHistory">🕘 Моя история</button>
+        </div>
+
+        <!-- STATE: история -->
+        <div id="fbsacts-history" class="missing-tasks-wrap" style="display:none;">
+          <div class="fbs-history-head">
+            <button type="button" class="fbs-history-back" id="btnFbsHistoryBack">← К поиску</button>
+            <span class="fbs-history-title" id="fbsHistoryTitle">Моя история</span>
+          </div>
+          <div class="fbs-history-filter">
+            <button type="button" class="fbs-hf-btn active" data-filter="all">Все</button>
+            <button type="button" class="fbs-hf-btn" data-filter="Найден">Найдены</button>
+            <button type="button" class="fbs-hf-btn" data-filter="Не найден">Не найдены</button>
+          </div>
+          <div class="fbs-history-list" id="fbsHistoryList"></div>
+        </div>
+
         <!-- STATE: загрузка -->
         <div id="fbsacts-loading" class="missing-state">
           <div class="spinner spinner-sm"></div>

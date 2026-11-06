@@ -32,7 +32,15 @@ var BP_SPREADSHEET_ID = '1-Ec83kDyLZvZ_l7zNyu3VrH-XSutfa0oI4FJ16bZY5Y';
 // ─────────────────────────────────────────
 function doGet(e) {
   try {
-    var action = e.parameter.action;
+    var action = e && e.parameter ? e.parameter.action : '';
+
+    // Без action — отдаём само приложение (запасной хостинг вместо GitHub Pages)
+    if (!action) {
+      return HtmlService.createHtmlOutputFromFile('WebApp')
+        .setTitle('РАО — Рабочие Операции')
+        .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover')
+        .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    }
 
     if (action === 'login') {
       return handleLogin(e.parameter.id);
@@ -60,6 +68,10 @@ function doGet(e) {
 
     if (action === 'getVozvTasks') {
       return handleGetVozvTasks(e.parameter.id);
+    }
+
+    if (action === 'getFbsActHistory') {
+      return handleGetFbsActHistory(e.parameter.id);
     }
 
     if (action === 'getFbsVycherkTask') {
@@ -113,6 +125,10 @@ function doPost(e) {
 
     if (data.action === 'logVozvResult') {
       return handleLogVozvResult(data);
+    }
+
+    if (data.action === 'logFbsActRecheck') {
+      return handleLogFbsActRecheck(data);
     }
 
     if (data.action === 'logFbsActBulk') {
@@ -1836,7 +1852,9 @@ function getFbsSearchColumns(sheet) {
     status:    find('статус'),
     foundQty:  find('найдено'),
     employee:  find('сотрудник аналитики', 'сотрудник'),
-    gm:        find('гм', 'гм')
+    gm:        find('гм', 'гм'),
+    price:     find('цена', 'цена'),
+    sumFound:  find('сумма нашли', 'сумма нашл')
   };
 }
 
@@ -1878,6 +1896,7 @@ function readFbsPendingActs(sheet, cols) {
     if (fbsText(r[cols.status])) continue;                 // уже обработано
     var cells = fbsSplitCells(r[cols.cells]);
     if (!cells.length) continue;                           // ещё не подготовлено к поиску
+    if (cols.storage >= 0 && fbsStorageBlocked(r[cols.storage])) continue;   // акт не на хранении (CARGO_PLACE / WORKPLACE)
     if (!byKey[actKey]) {
       byKey[actKey] = { key: actKey, act: fbsText(r[cols.act]), rows: [] };
       acts.push(byKey[actKey]);
@@ -2053,7 +2072,8 @@ function handleLogFbsActResult(data) {
     var actLeft = 0;
     for (var j = 0; j < all.length; j++) {
       if (fbsNorm(all[j][cols.act]) === actKey && !fbsText(all[j][cols.status]) &&
-          fbsSplitCells(all[j][cols.cells]).length) actLeft++;
+          fbsSplitCells(all[j][cols.cells]).length &&
+          !(cols.storage >= 0 && fbsStorageBlocked(all[j][cols.storage]))) actLeft++;
     }
     setFbsActLock(ctx.bpSs, employeeName, actLeft ? fbsText(data.act) : null);
 
@@ -2380,6 +2400,7 @@ function handleLogFbsActBulk(data) {
     for (var i = 0; i < all.length; i++) {
       var r = all[i];
       if (fbsNorm(r[cols.act]) !== actKey || !fbsText(r[cols.sku]) || fbsText(r[cols.status])) continue;
+      if (cols.storage >= 0 && fbsStorageBlocked(r[cols.storage])) continue;
       var qty = cols.qty >= 0 ? (parseInt(r[cols.qty], 10) || 1) : 1;
       var rowNum = i + 2;
       sheet.getRange(rowNum, cols.status    + 1).setValue(result);
@@ -2629,6 +2650,21 @@ function distributeVozv() {
   }
 }
 
+/** Какой разделитель аргументов понимает таблица: пробуем «;», если ошибка — «,». */
+function vozvFormulaSeparator(sheet) {
+  var probe = sheet.getRange(1, 30);
+  var sep = ';';
+  try {
+    probe.setFormula('=SUM(1;1)');
+    SpreadsheetApp.flush();
+    if (probe.getValue() !== 2) sep = ',';
+  } catch (e) {
+    sep = ',';
+  }
+  probe.clearContent();
+  return sep;
+}
+
 function vozvColLetter(idx) {   // 0-based → A, B, ..., AA
   var s = '', n = idx + 1;
   while (n > 0) { var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
@@ -2680,10 +2716,15 @@ function buildVozvSummary(ss, dataSheet, cols, helpers) {
       '=IFERROR(E' + r + '/C' + r + ';0)']);
   });
 
-  // Apps Script принимает формулы в английском синтаксисе (разделитель «,») при любой локали таблицы
-  rows = rows.map(function (r) { return r.map(function (v) { return typeof v === 'string' && v[0] === '=' ? v.replace(/;/g, ',') : v; }); });
+  // Разделитель аргументов зависит от локали таблицы (ru → «;», en → «,»).
+  // Не гадаем: проверяем пробной формулой в свободной ячейке.
+  var sep = vozvFormulaSeparator(sh);
+  var isF = function (v) { return typeof v === 'string' && v[0] === '='; };
+  var values   = rows.map(function (r) { return r.map(function (v) { return isF(v) ? '' : v; }); });
+  var formulas = rows.slice(1).map(function (r) { return r.slice(2).map(function (v) { return isF(v) ? v.replace(/;/g, sep) : ''; }); });
 
-  sh.getRange(1, 1, rows.length, head.length).setValues(rows);
+  sh.getRange(1, 1, values.length, head.length).setValues(values);
+  sh.getRange(2, 3, formulas.length, head.length - 2).setFormulas(formulas);
   sh.getRange(1, 1, 1, head.length).setFontWeight('bold').setBackground('#4c1d95').setFontColor('#ffffff');
   sh.getRange(2, 4, rows.length - 1, 1).setNumberFormat('#,##0');
   sh.getRange(2, 8, rows.length - 1, 1).setNumberFormat('#,##0');
@@ -2778,4 +2819,138 @@ function handleLogVozvResult(data) {
   sheet.getRange(rowNum, cols.searchAt + 1).setNumberFormat('dd.MM.yyyy HH:mm:ss');
 
   return jsonOk({ success: true });
+}
+
+
+// ─── Поиск актов: фильтр хранения, история, повторный поиск ───
+var FBS_SUPPORT_SS_ID    = '1rkCY44yxdsYdEqyPj4q9-uhV9oX_ydF629K0ienOCjA'; // ФБС компенсация (сергели)
+var FBS_SUPPORT_SHEET    = 'Лист1';
+
+/** Акт ещё не на хранении — не выдаём на поиск. */
+function fbsStorageBlocked(v) {
+  return /^\s*(CARGO_PLACE|WORKPLACE)/i.test(String(v || ''));
+}
+
+/** GET getFbsActHistory&id=... — все позиции, отмеченные сотрудником (новые сверху). */
+function handleGetFbsActHistory(employeeId) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var employeeName = getEmployeeNameById(ss, employeeId);
+  if (!employeeName) return jsonOk({ success: false, error: 'Сотрудник не найден' });
+  var ctx = getFbsSearchSheet();
+  if (ctx.error) return jsonOk({ success: false, error: ctx.error });
+  var sheet = ctx.sheet, cols = ctx.cols;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return jsonOk({ success: true, items: [] });
+  var data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  var items = [];
+  for (var i = data.length - 1; i >= 0 && items.length < 500; i--) {
+    var r = data[i];
+    var status = fbsText(r[cols.status]);
+    if (!status || !isEmployeeMatch(r[cols.employee], employeeName)) continue;
+    items.push({
+      row:       i + 2,
+      act:       fbsText(r[cols.act]),
+      sku:       fbsText(r[cols.sku]),
+      desc:      cols.desc >= 0 ? fbsText(r[cols.desc]) : '',
+      qty:       cols.qty  >= 0 ? (parseInt(r[cols.qty], 10) || 1) : 1,
+      cells:     fbsSplitCells(r[cols.cells]),
+      storage:   cols.storage >= 0 ? fbsText(r[cols.storage]) : '',
+      gm:        cols.gm >= 0 ? fbsText(r[cols.gm]) : '',
+      status:    status,
+      foundCell: fbsText(r[cols.foundCell]),
+      foundQty:  parseInt(r[cols.foundQty], 10) || 0
+    });
+  }
+  return jsonOk({ success: true, items: items });
+}
+
+/**
+ * POST logFbsActRecheck { employeeId, row, act, sku, foundCell, foundQty }
+ * Повторный поиск: «Не найден» → «Найден». Пишет в «Поиск FBS» и сразу в «ФБС компенсация».
+ */
+function handleLogFbsActRecheck(data) {
+  var foundCell = String(data.foundCell || '').trim();
+  var foundQty  = parseInt(data.foundQty, 10) || 0;
+  if (!data.act || !data.sku) return jsonOk({ success: false, error: 'Неполные данные' });
+  if (!foundCell || foundQty < 1) return jsonOk({ success: false, error: 'Укажите ячейку и количество' });
+
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var employeeName = getEmployeeNameById(ss, data.employeeId);
+  if (!employeeName) return jsonOk({ success: false, error: 'Сотрудник не найден' });
+  var ctx = getFbsSearchSheet();
+  if (ctx.error) return jsonOk({ success: false, error: ctx.error });
+  var sheet = ctx.sheet, cols = ctx.cols;
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(20000)) return jsonOk({ success: false, error: 'Сервер занят, попробуйте ещё раз' });
+  var saved;
+  try {
+    var actKey = fbsNorm(data.act), skuKey = fbsNorm(data.sku);
+    var lastRow = sheet.getLastRow();
+    var all = sheet.getRange(2, 1, Math.max(lastRow - 1, 1), sheet.getLastColumn()).getValues();
+    var rowNum = parseInt(data.row, 10) || 0;
+    var ok = function (r) {
+      return r && fbsNorm(r[cols.act]) === actKey && fbsNorm(r[cols.sku]) === skuKey &&
+             fbsText(r[cols.status]) === 'Не найден' && isEmployeeMatch(r[cols.employee], employeeName);
+    };
+    if (!(rowNum >= 2 && ok(all[rowNum - 2]))) {
+      rowNum = 0;
+      for (var i = 0; i < all.length; i++) if (ok(all[i])) { rowNum = i + 2; break; }
+    }
+    if (!rowNum) return jsonOk({ success: false, error: 'Позиция не найдена или уже не «Не найден»' });
+
+    var r = all[rowNum - 2];
+    var maxQty = cols.qty >= 0 ? (parseInt(r[cols.qty], 10) || 1) : foundQty;
+    if (foundQty > maxQty) return jsonOk({ success: false, error: 'Найдено больше, чем по заданию (' + maxQty + ')' });
+
+    sheet.getRange(rowNum, cols.status    + 1).setValue('Найден');
+    sheet.getRange(rowNum, cols.foundCell + 1).setValue(foundCell);
+    sheet.getRange(rowNum, cols.foundQty  + 1).setValue(foundQty);
+    sheet.getRange(rowNum, cols.employee  + 1).setValue(employeeName);
+    if (cols.price >= 0 && cols.sumFound >= 0) {
+      var price = parseFloat(String(r[cols.price]).replace(/\s/g, '').replace(',', '.')) || 0;
+      if (price) sheet.getRange(rowNum, cols.sumFound + 1).setValue(price * foundQty);
+    }
+    saved = { act: fbsText(r[cols.act]), sku: fbsText(r[cols.sku]) };
+  } finally {
+    lock.releaseLock();
+  }
+
+  // Сразу — в таблицу саппортов (ошибка здесь не отменяет запись: часовая синхронизация догонит)
+  var pushed = false, pushError = '';
+  try {
+    pushed = fbsPushToSupport(saved.act, saved.sku, {
+      'статус': 'Найден', 'найдено в ячейке': foundCell, 'найдено': foundQty, 'сотрудник аналитики': employeeName
+    }) > 0;
+  } catch (e) { pushError = String(e); }
+
+  return jsonOk({ success: true, pushedToSupport: pushed, pushError: pushError });
+}
+
+/** Пишет значения в «ФБС компенсация (сергели)» во все строки с тем же «акт + ШК». Возвращает число строк. */
+function fbsPushToSupport(act, sku, valuesByHeader) {
+  var sss = SpreadsheetApp.openById(FBS_SUPPORT_SS_ID);
+  var sh = sss.getSheetByName(FBS_SUPPORT_SHEET) || sss.getSheets()[0];
+  var lastRow = sh.getLastRow();
+  if (lastRow < 2) return 0;
+  var headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(function (h) { return String(h || '').toLowerCase().replace(/\s+/g, ' ').trim(); });
+  var cAct = headers.indexOf('номер акта возврата');
+  if (cAct < 0) for (var a = 0; a < headers.length; a++) if (headers[a].indexOf('номер акта') === 0) { cAct = a; break; }
+  var cSku = -1;
+  for (var b = 0; b < headers.length; b++) if (headers[b].indexOf('шк товара') === 0) { cSku = b; break; }
+  if (cAct < 0 || cSku < 0) throw new Error('В «ФБС компенсация» нет колонок акт/ШК');
+
+  var targets = [];
+  for (var h in valuesByHeader) { var ci = headers.indexOf(h); if (ci >= 0) targets.push({ c: ci, v: valuesByHeader[h] }); }
+  if (!targets.length) return 0;
+
+  var keys = sh.getRange(2, 1, lastRow - 1, Math.max(cAct, cSku) + 1).getValues();
+  var actKey = fbsNorm(act), skuKey = fbsNorm(sku), n = 0;
+  for (var i = 0; i < keys.length; i++) {
+    if (fbsNorm(keys[i][cAct]) !== actKey || fbsNorm(keys[i][cSku]) !== skuKey) continue;
+    targets.forEach(function (t) { sh.getRange(i + 2, t.c + 1).setValue(t.v); });
+    n++;
+  }
+  return n;
 }

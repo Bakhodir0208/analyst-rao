@@ -1971,7 +1971,9 @@ function fbsActsState() {
 }
 
 function setFbsActsState(name, message) {
-  ['loading', 'empty', 'error', 'task'].forEach(s => {
+  const tb = document.getElementById('fbsActsToolbar');
+  if (tb) tb.style.display = (name === 'history') ? 'none' : 'flex';
+  ['loading', 'empty', 'error', 'task', 'history'].forEach(s => {
     const el = document.getElementById('fbsacts-' + s);
     if (el) el.style.display = 'none';
   });
@@ -2147,11 +2149,27 @@ function selectFbsActRow(i) {
 function showFbsActConfirm(result) {
   const st  = fbsActsState();
   const row = st.rows[0];
-  if (!row || st.busy) return;
+  if (st.busy || (!row && result !== 'recheck')) return;
   st.pending = result;
 
   const qtyGroup = document.getElementById('fbsActQtyGroup');
   if (qtyGroup) qtyGroup.style.display = '';
+
+  if (result === 'recheck') {
+    const h = st.recheckItem;
+    document.getElementById('fbsActConfirmTitle').textContent = 'Повторный поиск: где нашли товар?';
+    document.getElementById('fbsActConfirmLabel').textContent = `✅ Найден · ${h.sku}`;
+    document.getElementById('fbsActFoundWrap').style.display = 'block';
+    const max = parseInt(h.qty, 10) || 1;
+    const qty = document.getElementById('fbsActFoundQty');
+    qty.value = max; qty.max = max;
+    document.getElementById('fbsActQtyMax').textContent = max;
+    const cell = document.getElementById('fbsActFoundCell');
+    cell.value = '';
+    setTimeout(() => cell.focus(), 150);
+    document.getElementById('fbsActConfirmOverlay').style.display = 'flex';
+    return;
+  }
 
   if (result === 'actFound' || result === 'actNotFound') {
     const n = st.rows.length;
@@ -2209,6 +2227,7 @@ async function submitFbsActResult() {
   const st     = fbsActsState();
   const row    = st.rows[0];
   const result = st.pending;
+  if (result === 'recheck') return submitFbsRecheck();
   if (!row || !result || st.busy) return;
   if (result === 'skipAct') return submitFbsSkipAct();
   if (result === 'actFound' || result === 'actNotFound') return submitFbsActBulk(result === 'actFound');
@@ -2334,6 +2353,130 @@ async function submitFbsSkipAct() {
   }
 }
 
+// ── История и повторный поиск ──
+async function openFbsActsHistory() {
+  const st = fbsActsState();
+  st.historyFilter = st.historyFilter || 'all';
+  setFbsActsState('history');
+  const list = document.getElementById('fbsHistoryList');
+  list.innerHTML = '<div class="missing-state-hint" style="text-align:center;padding:20px;">Загрузка...</div>';
+  try {
+    const res = await apiGet({ action: 'getFbsActHistory', id: state.employeeId });
+    if (!res.success) { list.innerHTML = ''; showError(res.error || 'Ошибка загрузки истории'); return; }
+    st.history = res.items || [];
+    renderFbsActsHistory();
+  } catch (err) {
+    console.error('[FBS acts] history error:', err);
+    list.innerHTML = '';
+    showError('Ошибка подключения к серверу');
+  }
+}
+
+function renderFbsActsHistory() {
+  const st = fbsActsState();
+  const all = st.history || [];
+
+  // Группировка по акту (порядок — как пришло: новые сверху)
+  const acts = [];
+  const byAct = {};
+  all.forEach(h => {
+    let a = byAct[h.act];
+    if (!a) { a = byAct[h.act] = { act: h.act, storage: h.storage || '', items: [] }; acts.push(a); }
+    if (!a.storage && h.storage) a.storage = h.storage;
+    a.items.push(h);
+  });
+  acts.forEach(a => {
+    a.nf = a.items.filter(h => h.status === 'Не найден');
+    a.allFound = a.nf.length === 0;
+  });
+
+  const f = st.historyFilter;
+  const shown = acts.filter(a => f === 'all' || (f === 'Найден' ? a.allFound : !a.allFound));
+  document.getElementById('fbsHistoryTitle').textContent =
+    `Актов ${acts.length} · с ненайденными ${acts.filter(a => !a.allFound).length}`;
+  document.querySelectorAll('.fbs-hf-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === f));
+
+  const list = document.getElementById('fbsHistoryList');
+  list.innerHTML = '';
+  if (!shown.length) {
+    list.innerHTML = '<div class="missing-state-hint" style="text-align:center;padding:20px;">Пока пусто</div>';
+    return;
+  }
+  st.historyOpen = st.historyOpen || {};
+
+  shown.forEach(a => {
+    const wrap = document.createElement('div');
+    wrap.className = 'fbs-hact' + (a.allFound ? '' : ' has-nf');
+
+    const head = document.createElement('button');
+    head.type = 'button';
+    head.className = 'fbs-hact-head';
+    const actEl = document.createElement('span'); actEl.className = 'fbs-hact-act'; actEl.textContent = a.act;
+    const stEl  = document.createElement('span');
+    stEl.className = 'fbs-hist-status ' + (a.allFound ? 'ok' : 'no');
+    stEl.textContent = a.allFound ? 'Найден'
+      : (a.nf.length === a.items.length ? 'Не найден' : `Не найден ${a.nf.length} из ${a.items.length}`);
+    const stor = document.createElement('span'); stor.className = 'fbs-hact-storage'; stor.textContent = a.storage || '—';
+    head.append(actEl, stEl, stor);
+    wrap.appendChild(head);
+
+    if (!a.allFound) {
+      const body = document.createElement('div');
+      body.className = 'fbs-hact-body';
+      body.style.display = st.historyOpen[a.act] ? 'flex' : 'none';
+      a.nf.forEach(h => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'fbs-hact-pos';
+        const sku = document.createElement('span'); sku.className = 'fbs-hist-sku'; sku.textContent = h.sku;
+        const cells = document.createElement('span'); cells.className = 'fbs-hist-meta'; cells.textContent = 'Искали: ' + ((h.cells || []).join(', ') || '—');
+        const re = document.createElement('span'); re.className = 'fbs-hist-recheck'; re.textContent = '🔁 Нашёл';
+        row.append(sku, re, cells);
+        row.addEventListener('click', e => { e.stopPropagation(); st.recheckItem = h; showFbsActConfirm('recheck'); });
+        body.appendChild(row);
+      });
+      wrap.appendChild(body);
+      head.addEventListener('click', () => {
+        st.historyOpen[a.act] = !st.historyOpen[a.act];
+        body.style.display = st.historyOpen[a.act] ? 'flex' : 'none';
+      });
+    }
+    list.appendChild(wrap);
+  });
+}
+
+async function submitFbsRecheck() {
+  const st = fbsActsState();
+  const h = st.recheckItem;
+  if (!h || st.busy) return;
+  const cellEl = document.getElementById('fbsActFoundCell');
+  const qtyEl  = document.getElementById('fbsActFoundQty');
+  const max = parseInt(h.qty, 10) || 1;
+  const foundCell = cellEl.value.trim();
+  const foundQty  = parseInt(qtyEl.value, 10) || 0;
+  if (!foundCell) { highlightInvalidInput(cellEl); showError('Укажите ячейку, где нашли товар'); return; }
+  if (foundQty < 1 || foundQty > max) { highlightInvalidInput(qtyEl); showError(`Количество от 1 до ${max}`); return; }
+
+  st.busy = true;
+  showLoader('Перезапись...');
+  try {
+    const res = await apiPost({ action: 'logFbsActRecheck', employeeId: state.employeeId,
+      row: h.row, act: h.act, sku: h.sku, foundCell, foundQty });
+    if (!res.success) { showError(res.error || 'Ошибка сохранения'); return; }
+    hideFbsActConfirm();
+    h.status = 'Найден'; h.foundCell = foundCell; h.foundQty = foundQty;
+    st.recheckItem = null;
+    renderFbsActsHistory();
+    showSuccess(res.pushedToSupport ? 'Перезаписано: Найден (и у саппортов)' : 'Перезаписано: Найден (саппортам уйдёт при синхронизации)');
+  } catch (err) {
+    console.error('[FBS acts] recheck error:', err);
+    showError('Ошибка подключения к серверу');
+  } finally {
+    st.busy = false;
+    hideLoader();
+  }
+}
+
 function releaseFbsAct() {
   const st = fbsActsState();
   if (!st.act || !state.employeeId) return;
@@ -2351,6 +2494,12 @@ function setupFbsActsEventListeners() {
   on('fbsActBulkFound',    () => showFbsActConfirm('actFound'));
   on('fbsActBulkNotFound', () => showFbsActConfirm('actNotFound'));
   on('fbsActDetailsBtn',   () => toggleFbsActDetails());
+  on('btnFbsActsHistory',  openFbsActsHistory);
+  on('btnFbsHistoryBack',  initFbsActsScreen);
+  document.querySelectorAll('.fbs-hf-btn').forEach(b => b.addEventListener('click', () => {
+    fbsActsState().historyFilter = b.dataset.filter;
+    renderFbsActsHistory();
+  }));
   on('fbsActNotFound', () => showFbsActConfirm('Не найден'));
   on('btnFbsActCancel',    hideFbsActConfirm);
   on('btnFbsActConfirmOk', submitFbsActResult);
